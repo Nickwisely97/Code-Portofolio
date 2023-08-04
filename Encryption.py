@@ -1,9 +1,9 @@
 seed = 3
 
 # easy message
-# sending_msg = 'Bersatu kita teguh, bercerai kita runtuh.'
+# sending_msg = "Bersatu kita teguh, bercerai kita runtuh."
 # medium message
-sending_msg = "Bukankah telah Kuperintahkan kepadamu: kuatkan dan teguhkanlah hatimu? Janganlah kecut dan tawar hati, sebab TUHAN, Allahmu, menyertai engkau, ke mana pun engkau pergi."
+sending_msg = "Indonesia tanah air beta. Pusaka Abadi nan Jaya. Indonesia sejak dulu kala, tetap dipuja-puja bangsa."
 
 msg1 = sending_msg.split(" ")
 
