@@ -350,24 +350,116 @@
     margin-top: 8px;
     flex-wrap: wrap;
   }
+  .team-panel input.team-title-input {
+    display: block;
+    width: 100%;
+    border: 1px solid transparent;
+    background: transparent;
+    text-align: center;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 14px;
+    border-radius: 6px;
+    padding: 4px 6px;
+    color: var(--text);
+    font-family: inherit;
+  }
+  .team-panel input.team-title-input:hover { border-color: var(--border); }
+  .team-panel input.team-title-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: #fff;
+  }
+  .team-panel input.score-num-input {
+    display: block;
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: center;
+    font-size: 72px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 18px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    font-family: inherit;
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+  .team-panel input.score-num-input::-webkit-outer-spin-button,
+  .team-panel input.score-num-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .team-panel input.score-num-input:focus {
+    outline: 2px solid var(--accent-soft);
+    border-radius: 8px;
+  }
+  .team-panel input.score-num-input:disabled { color: var(--text); opacity: 1; }
+
+  /* ---- Mode select screen ---- */
+  .mode-select-wrap { max-width: 720px; margin: 60px auto; text-align: center; }
+  .mode-select-wrap h2 { margin: 0 0 8px; font-size: 26px; }
+  .mode-select-desc { color: var(--muted); margin: 0 0 32px; }
+  .mode-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .mode-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 20px;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color .15s, box-shadow .15s, transform .1s;
+    font-family: inherit;
+  }
+  .mode-card:hover {
+    border-color: var(--accent);
+    box-shadow: 0 4px 14px rgba(37,99,235,.12);
+    transform: translateY(-2px);
+  }
+  .mode-card-icon { font-size: 40px; margin-bottom: 12px; }
+  .mode-card-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: var(--text); }
+  .mode-card-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+  @media (max-width: 600px) { .mode-cards { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
 
 <header class="topbar">
   <h1>🏆 Tournament Bracket &amp; Score Tracker</h1>
-  <nav class="tabs">
+  <nav class="tabs" id="mode-tabs" style="display:none;">
     <button id="tab-bracket" class="active" data-view="bracket">Bracket</button>
     <button id="tab-games" data-view="games">Games</button>
   </nav>
   <div class="topbar-actions">
+    <button class="btn btn-secondary btn-sm" id="btn-change-mode" style="display:none;">🔀 Ganti Mode</button>
     <button class="btn btn-danger btn-sm" id="btn-reset-all">Reset Semua Data</button>
   </div>
 </header>
 
 <main>
+  <!-- ================= MODE SELECT VIEW ================= -->
+  <section id="view-mode-select" class="view active">
+    <div class="mode-select-wrap">
+      <h2>Pilih Mode</h2>
+      <p class="mode-select-desc">Pilih cara kamu ingin menggunakan aplikasi ini.</p>
+      <div class="mode-cards">
+        <button class="mode-card" id="btn-mode-single">
+          <div class="mode-card-icon">🎯</div>
+          <div class="mode-card-title">Single Game</div>
+          <div class="mode-card-desc">Langsung hitung skor satu pertandingan, tanpa bracket. Cocok untuk pertandingan tunggal seperti tenis meja satu lawan satu.</div>
+        </button>
+        <button class="mode-card" id="btn-mode-multiple">
+          <div class="mode-card-icon">🏆</div>
+          <div class="mode-card-title">Multiple Game</div>
+          <div class="mode-card-desc">Buat bracket turnamen penuh dengan banyak babak dan pertandingan.</div>
+        </button>
+      </div>
+    </div>
+  </section>
+
   <!-- ================= BRACKET VIEW ================= -->
-  <section id="view-bracket" class="view active">
+  <section id="view-bracket" class="view">
     <div class="bracket-toolbar">
       <h2>Bracket Turnamen</h2>
       <div class="bracket-generator">
@@ -498,17 +590,37 @@
     }
   }
 
+  // Single Game mode uses one standalone match (not part of the bracket
+  // cascade — no nextMatchId, so a finished single game never advances
+  // anything). Reused across sessions until Reset Semua Data / mode change.
+  function ensureSingleMatch() {
+    if (!state.singleMatch) {
+      state.singleMatch = makeEmptyMatch("Single Game", "Tim A", "Tim B");
+    }
+    state.activeMatchId = state.singleMatch.id;
+    saveState();
+  }
+
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.matches)) return parsed;
+        if (parsed && Array.isArray(parsed.matches)) {
+          if (parsed.mode === undefined) {
+            // Back-compat: state saved before mode selection existed —
+            // if it already has a bracket, treat it as Multiple Game mode
+            // so returning users aren't dropped back to the mode picker.
+            parsed.mode = parsed.matches.length > 0 ? "multiple" : null;
+          }
+          if (parsed.singleMatch === undefined) parsed.singleMatch = null;
+          return parsed;
+        }
       }
     } catch (e) {
       console.warn("Gagal memuat state tersimpan, mulai dari kosong.", e);
     }
-    return { matches: [], activeMatchId: null, currentView: "bracket" };
+    return { mode: null, matches: [], activeMatchId: null, currentView: "bracket", singleMatch: null };
   }
 
   let state = loadState();
@@ -518,6 +630,7 @@
   }
 
   function getActiveMatch() {
+    if (state.mode === "single") return state.singleMatch;
     return state.matches.find((m) => m.id === state.activeMatchId) || null;
   }
 
@@ -690,11 +803,34 @@
 
     const historyParts = m.games.map((g, i) => g ? `<span>G${i + 1}: ${g.a}-${g.b}</span>` : "").filter(Boolean);
 
+    // Every game after the first swaps which side each team appears on
+    // (A vs B, then B vs A, then A vs B, ...) so teams alternate position
+    // each time they finish a game. This is purely a display swap for the
+    // live scoreboard — the underlying teamA/teamB identity, and the
+    // bracket's per-game A/B columns, are never touched.
+    const swapped = m.currentGameIndex % 2 === 1;
+    const leftKey = swapped ? "b" : "a";
+    const rightKey = swapped ? "a" : "b";
+    const nameFor = (key) => (key === "a" ? m.teamA : m.teamB);
+
+    const teamPanel = (key, placeholder) => `
+      <div class="team-panel">
+        <input class="team-title-input" type="text" data-role="team-name-live" data-key="${key}"
+               value="${escapeHtml(nameFor(key))}" placeholder="${placeholder}">
+        <input class="score-num-input" type="number" min="0" inputmode="numeric"
+               id="live-score-${key}" data-role="score-input" data-key="${key}"
+               value="${m.live[key]}" ${isDone ? "disabled" : ""}>
+        <div class="score-btns">
+          <button class="score-btn minus" data-role="dec" data-key="${key}" ${isDone ? "disabled" : ""}>−</button>
+          <button class="score-btn plus" data-role="inc" data-key="${key}" ${isDone ? "disabled" : ""}>+</button>
+        </div>
+      </div>`;
+
     container.innerHTML = `
       <div class="scoreboard-wrap">
         <div class="scoreboard-header">
           <div class="round-label">${escapeHtml(m.round)}</div>
-          <div class="game-label">${escapeHtml(m.teamA || "Tim A")} vs ${escapeHtml(m.teamB || "Tim B")}</div>
+          <div class="game-label">${escapeHtml(nameFor(leftKey) || "Tim A")} vs ${escapeHtml(nameFor(rightKey) || "Tim B")}</div>
           <div class="game-label">${gameLabel}</div>
         </div>
 
@@ -703,23 +839,9 @@
         ${isDone ? `<div class="done-banner">🏆 ${escapeHtml(m.winner === "A" ? m.teamA : m.teamB)} memenangkan pertandingan (${won.a}-${won.b})</div>` : ""}
 
         <div class="scoreboard">
-          <div class="team-panel">
-            <div class="team-title">${escapeHtml(m.teamA || "Tim A")}</div>
-            <div class="score-num" id="live-score-a">${m.live.a}</div>
-            <div class="score-btns">
-              <button class="score-btn minus" data-role="dec" data-side="A" ${isDone ? "disabled" : ""}>−</button>
-              <button class="score-btn plus" data-role="inc" data-side="A" ${isDone ? "disabled" : ""}>+</button>
-            </div>
-          </div>
+          ${teamPanel(leftKey, "Nama Tim")}
           <div class="vs-label">VS</div>
-          <div class="team-panel">
-            <div class="team-title">${escapeHtml(m.teamB || "Tim B")}</div>
-            <div class="score-num" id="live-score-b">${m.live.b}</div>
-            <div class="score-btns">
-              <button class="score-btn minus" data-role="dec" data-side="B" ${isDone ? "disabled" : ""}>−</button>
-              <button class="score-btn plus" data-role="inc" data-side="B" ${isDone ? "disabled" : ""}>+</button>
-            </div>
-          </div>
+          ${teamPanel(rightKey, "Nama Tim")}
         </div>
 
         <div class="scoreboard-actions">
@@ -728,16 +850,23 @@
             : `<button class="btn btn-secondary" id="btn-reset-live">↺ Reset Game Ini</button>
                <button class="btn btn-primary" id="btn-finish-game">✔ Selesaikan Game ${m.currentGameIndex + 1}</button>`
           }
-          <button class="btn btn-secondary" id="btn-back-to-bracket">← Kembali ke Bracket</button>
+          ${state.mode === "multiple" ? `<button class="btn btn-secondary" id="btn-back-to-bracket">← Kembali ke Bracket</button>` : ""}
         </div>
       </div>`;
 
     // wire up
     container.querySelectorAll("[data-role='inc']").forEach((el) => {
-      el.addEventListener("click", (e) => adjustLiveScore(e.currentTarget.getAttribute("data-side"), 1));
+      el.addEventListener("click", (e) => adjustLiveScore(e.currentTarget.getAttribute("data-key"), 1));
     });
     container.querySelectorAll("[data-role='dec']").forEach((el) => {
-      el.addEventListener("click", (e) => adjustLiveScore(e.currentTarget.getAttribute("data-side"), -1));
+      el.addEventListener("click", (e) => adjustLiveScore(e.currentTarget.getAttribute("data-key"), -1));
+    });
+    container.querySelectorAll("[data-role='score-input']").forEach((el) => {
+      el.addEventListener("change", (e) => setLiveScore(e.target.getAttribute("data-key"), e.target.value));
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); });
+    });
+    container.querySelectorAll("[data-role='team-name-live']").forEach((el) => {
+      el.addEventListener("input", (e) => setTeamNameLive(e.target.getAttribute("data-key"), e.target.value));
     });
     const finishBtn = document.getElementById("btn-finish-game");
     if (finishBtn) finishBtn.addEventListener("click", finishCurrentGame);
@@ -745,25 +874,44 @@
     if (resetBtn) resetBtn.addEventListener("click", resetLiveScore);
     const reopenBtn = document.getElementById("btn-reopen-match");
     if (reopenBtn) reopenBtn.addEventListener("click", reopenMatch);
-    document.getElementById("btn-back-to-bracket").addEventListener("click", () => switchView("bracket"));
+    const backBtn = document.getElementById("btn-back-to-bracket");
+    if (backBtn) backBtn.addEventListener("click", () => switchView("bracket"));
   }
 
-  function adjustLiveScore(side, delta) {
+  function adjustLiveScore(key, delta) {
     const m = getActiveMatch();
     if (!m || m.status === "done") return;
-    const key = side === "A" ? "a" : "b";
     m.live[key] = Math.max(0, m.live[key] + delta);
     if (m.status === "pending") m.status = "in_progress";
     saveState();
     // Light-touch update for the Games view: just refresh the two numbers
     // instead of a full re-render, so +/- stays snappy on rapid clicks.
-    document.getElementById("live-score-a").textContent = m.live.a;
-    document.getElementById("live-score-b").textContent = m.live.b;
+    document.getElementById("live-score-" + key).value = m.live[key];
     // But keep the Bracket view's game-box in sync too, so whichever match
     // is being live-scored shows its current score there in real time —
     // whether the bracket happens to be visible right now or you switch to
     // it mid-game.
-    renderBracket();
+    if (state.mode === "multiple") renderBracket();
+  }
+
+  function setLiveScore(key, rawValue) {
+    const m = getActiveMatch();
+    if (!m || m.status === "done") return;
+    let val = parseInt(rawValue, 10);
+    if (!Number.isFinite(val) || val < 0) val = 0;
+    m.live[key] = val;
+    if (m.status === "pending") m.status = "in_progress";
+    saveState();
+    document.getElementById("live-score-" + key).value = val;
+    if (state.mode === "multiple") renderBracket();
+  }
+
+  function setTeamNameLive(key, value) {
+    const m = getActiveMatch();
+    if (!m) return;
+    if (key === "a") m.teamA = value; else m.teamB = value;
+    saveState();
+    if (state.mode === "multiple") renderBracket();
   }
 
   function resetLiveScore() {
@@ -805,7 +953,7 @@
     }
     saveState();
     renderGames();
-    renderBracket(); // keep the bracket's mini score table (and next round) in sync
+    if (state.mode === "multiple") renderBracket(); // keep the bracket's mini score table (and next round) in sync
   }
 
   function reopenMatch() {
@@ -837,7 +985,7 @@
     }
     saveState();
     renderGames();
-    renderBracket();
+    if (state.mode === "multiple") renderBracket();
   }
 
   // ---------------------------------------------------------------------
@@ -850,6 +998,25 @@
   }
 
   function renderAll() {
+    const modeChosen = state.mode !== null;
+    document.getElementById("view-mode-select").classList.toggle("active", !modeChosen);
+    document.getElementById("mode-tabs").style.display = state.mode === "multiple" ? "flex" : "none";
+    document.getElementById("btn-change-mode").style.display = modeChosen ? "inline-block" : "none";
+
+    if (!modeChosen) {
+      document.getElementById("view-bracket").classList.remove("active");
+      document.getElementById("view-games").classList.remove("active");
+      return;
+    }
+
+    if (state.mode === "single") {
+      document.getElementById("view-bracket").classList.remove("active");
+      document.getElementById("view-games").classList.add("active");
+      renderGames();
+      return;
+    }
+
+    // Multiple Game mode: normal Bracket / Games tabs.
     document.getElementById("tab-bracket").classList.toggle("active", state.currentView === "bracket");
     document.getElementById("tab-games").classList.toggle("active", state.currentView === "games");
     document.getElementById("view-bracket").classList.toggle("active", state.currentView === "bracket");
@@ -876,6 +1043,32 @@
   });
 
   // ---------------------------------------------------------------------
+  // Mode select
+  // ---------------------------------------------------------------------
+  document.getElementById("btn-mode-single").addEventListener("click", () => {
+    state.mode = "single";
+    ensureSingleMatch();
+    state.currentView = "games";
+    saveState();
+    renderAll();
+  });
+
+  document.getElementById("btn-mode-multiple").addEventListener("click", () => {
+    state.mode = "multiple";
+    ensureDefaultBracket();
+    state.currentView = "bracket";
+    saveState();
+    renderAll();
+  });
+
+  document.getElementById("btn-change-mode").addEventListener("click", () => {
+    if (!confirm("Kembali ke menu pilih mode? Data yang sudah ada akan tetap tersimpan.")) return;
+    state.mode = null;
+    saveState();
+    renderAll();
+  });
+
+  // ---------------------------------------------------------------------
   // Top-level nav + reset
   // ---------------------------------------------------------------------
   document.querySelectorAll("nav.tabs button").forEach((btn) => {
@@ -883,17 +1076,19 @@
   });
 
   document.getElementById("btn-reset-all").addEventListener("click", () => {
-    if (!confirm("Hapus SEMUA pertandingan dan skor, lalu mulai ulang dengan bracket default 8 tim?")) return;
-    state = { matches: [], activeMatchId: null, currentView: "bracket" };
-    ensureDefaultBracket();
+    if (!confirm("Hapus SEMUA pertandingan dan skor, lalu kembali ke menu pilih mode?")) return;
+    state = { mode: null, matches: [], activeMatchId: null, currentView: "bracket", singleMatch: null };
+    saveState();
     renderAll();
   });
 
   // ---------------------------------------------------------------------
-  // Boot — default to an 8-team (Perempat Final) bracket if there's nothing
-  // saved yet, so the app is immediately usable without any setup step.
+  // Boot — resume whichever mode (and data) was last saved. If a bracket
+  // was already in progress, keep it ready to go the moment Multiple Game
+  // is (re-)selected; same for an in-progress single game.
   // ---------------------------------------------------------------------
-  ensureDefaultBracket();
+  if (state.mode === "multiple") ensureDefaultBracket();
+  if (state.mode === "single") ensureSingleMatch();
   renderAll();
 })();
 </script>
