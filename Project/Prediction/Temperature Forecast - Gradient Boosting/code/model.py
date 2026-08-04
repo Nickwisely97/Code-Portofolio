@@ -2,15 +2,18 @@
 model.py
 LightGBM model untuk prediksi suhu temperatur di Indonesia.
 
-Parameter utama:
-  END_TRAIN   : Tanggal akhir data training (str 'YYYY-MM-DD')
-  TARGET_DATE : Tanggal akhir prediksi yang diinginkan (str 'YYYY-MM-DD')
+Model ini adalah "direct multi-horizon": satu model memprediksi suhu pada
+jam manapun dari 1 sampai `horizon_hours` ke depan dari sebuah forecast
+origin T0 sekaligus, dengan `horizon_h` sebagai salah satu fitur. Data
+latih/evaluasi/live-forecast dibangun di preprocessing.py
+(build_direct_horizon_frame) — kelas di sini murni urusan training,
+prediksi, metrik, dan plotting terhadap frame yang sudah jadi.
 
 Output:
   - Model terlatih
-  - DataFrame prediksi (actual, predicted_actual, recorded_actual)
-  - Grafik perbandingan
-  - Metrics evaluasi (MAE, RMSE, MAPE, R²)
+  - Metrik backtest (walk-forward, per hari horizon)
+  - Forecast live (14 hari ke depan dari origin terbaru)
+  - Grafik: skill vs horizon, forecast fan, feature importance
 """
 
 import os
@@ -24,13 +27,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.preprocessing import LabelEncoder
 from typing import Optional, Tuple, Dict, List
 import joblib
 
-from preprocessing import get_feature_columns, split_train_test, TARGET_COL
+from preprocessing import get_feature_columns, TARGET_COL
 
-warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -60,34 +61,33 @@ OUTPUT_DIR = "output"
 # ─── Kelas Model ─────────────────────────────────────────────────────────────
 class TemperatureForecastModel:
     """
-    LightGBM-based temperature forecasting model.
+    LightGBM direct multi-horizon temperature forecasting model.
 
     Parameters
     ----------
-    end_train   : str  — Tanggal akhir data training, format 'YYYY-MM-DD'
-    target_date : str  — Tanggal akhir prediksi, format 'YYYY-MM-DD'
     station     : str  — Nama stasiun (untuk label grafik dan penyimpanan file)
+    end_train   : str  — Metadata label saja (batas origin training), untuk judul grafik
+    target_date : str  — Metadata label saja (batas jendela backtest), untuk judul grafik
     lgbm_params : dict — Hyperparameter LightGBM (opsional, override default)
     """
 
     def __init__(
         self,
-        end_train:   str,
-        target_date: str,
         station:     str = "Indonesia",
+        end_train:   Optional[str] = None,
+        target_date: Optional[str] = None,
         lgbm_params: Optional[dict] = None,
     ):
+        self.station     = station
         self.end_train   = end_train
         self.target_date = target_date
-        self.station     = station
         self.params      = {**DEFAULT_LGBM_PARAMS, **(lgbm_params or {})}
 
-        self.model        = None
+        self.model         = None
         self.feature_cols: List[str] = []
-        self.label_enc    = LabelEncoder()
-        self.df_train_    = None
-        self.df_test_     = None
-        self.df_result_   = None
+        self.climatology_   = None
+        self.df_backtest_   = None
+        self.df_live_       = None
 
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -99,38 +99,35 @@ class TemperatureForecastModel:
         return X, y
 
     # ──────────────────────────────────────────────────────────────────────────
-    def fit(self, df: pd.DataFrame) -> "TemperatureForecastModel":
+    def fit(self, df_train: pd.DataFrame) -> "TemperatureForecastModel":
         """
-        Latih model LightGBM.
+        Latih model LightGBM pada direct-horizon training frame (hasil
+        preprocessing.build_direct_horizon_frame, semua barisnya punya
+        actual/y karena origin-nya cukup lama).
 
-        Args:
-            df : DataFrame hasil preprocessing (output dari preprocessing.run_preprocessing).
-
-        Returns:
-            self
+        Validasi dipisah per ORIGIN (bukan per baris): 10% origin paling
+        akhir ditahan sebagai validation set, supaya baris-baris satu
+        origin yang sama tidak bocor antara train dan validation.
         """
-        # Split train / test
-        self.df_train_, self.df_test_ = split_train_test(
-            df, self.end_train, self.target_date
-        )
+        if df_train.empty:
+            raise ValueError("Training dataset is empty. Check origin selection / date range.")
 
-        if self.df_train_.empty:
-            raise ValueError("Training dataset is empty. Check END_TRAIN against the available data.")
-
-        # Determine feature columns from the training data
-        self.feature_cols = get_feature_columns(self.df_train_)
+        self.feature_cols = get_feature_columns(df_train)
         logger.info(f"[Model] Feature columns: {len(self.feature_cols)} features")
 
-        X_train, y_train = self._prepare_xy(self.df_train_)
+        origins    = np.sort(df_train["origin"].unique())
+        n_val      = max(1, int(len(origins) * 0.10))
+        val_origin_set = set(origins[-n_val:])
+        is_val     = df_train["origin"].isin(val_origin_set)
 
-        # Validasi dengan 10% terakhir dari training
-        val_size   = max(1, int(len(X_train) * 0.10))
-        X_val      = X_train.iloc[-val_size:]
-        y_val      = y_train.iloc[-val_size:]
-        X_tr       = X_train.iloc[:-val_size]
-        y_tr       = y_train.iloc[:-val_size]
+        df_tr, df_val = df_train[~is_val], df_train[is_val]
+        X_tr, y_tr    = self._prepare_xy(df_tr)
+        X_val, y_val  = self._prepare_xy(df_val)
 
-        logger.info(f"[Model] Training: {len(X_tr)} | Validation: {len(X_val)}")
+        logger.info(
+            f"[Model] Origins: {len(origins)} total, {len(origins) - n_val} train / {n_val} val | "
+            f"Rows: {len(X_tr)} train / {len(X_val)} val"
+        )
 
         dtrain = lgb.Dataset(X_tr,  label=y_tr)
         dval   = lgb.Dataset(X_val, label=y_val, reference=dtrain)
@@ -140,298 +137,220 @@ class TemperatureForecastModel:
             lgb.log_evaluation(period=200),
         ]
 
-        # Pisahkan params training dari init params
-        fit_params = {k: v for k, v in self.params.items()
-                      if k not in ("n_estimators",)}
+        fit_params = {k: v for k, v in self.params.items() if k not in ("n_estimators",)}
 
-        self.model = lgb.train(
-            params            = fit_params,
-            train_set         = dtrain,
-            num_boost_round   = self.params["n_estimators"],
-            valid_sets        = [dtrain, dval],
-            valid_names       = ["train", "valid"],
-            callbacks         = callbacks,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.model = lgb.train(
+                params          = fit_params,
+                train_set       = dtrain,
+                num_boost_round = self.params["n_estimators"],
+                valid_sets      = [dtrain, dval],
+                valid_names     = ["train", "valid"],
+                callbacks       = callbacks,
+            )
 
-        # In-sample metrics
-        y_pred_train = self.model.predict(X_train)
-        self._log_metrics(y_train, y_pred_train, label="Train")
+        self._log_metrics(y_tr, self.model.predict(X_tr), label="Train")
+        self._log_metrics(y_val, self.model.predict(X_val), label="Validation")
 
         return self
 
     # ──────────────────────────────────────────────────────────────────────────
-    def predict(self, df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """
-        Jalankan prediksi.
-
-        Args:
-            df : DataFrame test (opsional). Jika None, gunakan self.df_test_.
-
-        Returns:
-            DataFrame dengan kolom:
-              - timestamp
-              - actual            : nilai suhu aktual (dari data historis, bisa NaN untuk future)
-              - predicted_actual  : prediksi model
-              - recorded_actual   : nilai aktual yang ter-record (= actual jika ada)
-              - residual          : selisih actual – predicted
-        """
+    def _predict_frame(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Prediksi mentah untuk sebuah direct-horizon frame, apa adanya."""
         if self.model is None:
             raise RuntimeError("Model has not been trained yet. Run .fit() first.")
-
-        if df is None:
-            df = self.df_test_
-
         if df.empty:
-            logger.warning("[Model] Test set is empty. No predictions made.")
-            return pd.DataFrame()
+            return pd.DataFrame(columns=["origin", "horizon_h", "timestamp", "predicted_actual"])
 
-        X_test, y_test = self._prepare_xy(df)
-        y_pred         = self.model.predict(X_test)
+        X = df[self.feature_cols].copy()
+        y_pred = self.model.predict(X)
 
-        result = pd.DataFrame({
-            "timestamp":        df["timestamp"].values,
-            "actual":           y_test.values,
-            "predicted_actual": y_pred,
-            "recorded_actual":  y_test.values,   # sama dengan actual (akan diisi NaN untuk future)
-        })
-        result["residual"] = result["actual"] - result["predicted_actual"]
+        result = df[["origin", "horizon_h", "timestamp"]].copy()
+        result["predicted_actual"] = y_pred
+        if TARGET_COL in df.columns:
+            result["actual"]   = df[TARGET_COL].values
+            result["residual"] = result["actual"] - result["predicted_actual"]
+        return result.reset_index(drop=True)
 
-        # Metrics test set
+    def predict_backtest(self, df_backtest: pd.DataFrame) -> pd.DataFrame:
+        """
+        Prediksi + evaluasi untuk sebuah backtest frame (rollback testing):
+        banyak origin historis, masing-masing dengan target yang sudah
+        benar-benar terjadi, jadi bisa dibandingkan dengan actual.
+        """
+        result = self._predict_frame(df_backtest)
+        if result.empty:
+            logger.warning("[Model] Backtest frame is empty. No predictions made.")
+            self.df_backtest_ = result
+            return result
+
         mask = ~result["actual"].isna()
         if mask.sum() > 0:
-            self._log_metrics(result.loc[mask, "actual"], result.loc[mask, "predicted_actual"], label="Test")
-
-        self.df_result_ = result
+            self._log_metrics(result.loc[mask, "actual"], result.loc[mask, "predicted_actual"], label="Backtest")
+        self.df_backtest_ = result
         return result
 
-    # ──────────────────────────────────────────────────────────────────────────
-    def predict_full(self, df: pd.DataFrame) -> pd.DataFrame:
+    def predict_live(self, df_live: pd.DataFrame) -> pd.DataFrame:
         """
-        Prediksi untuk SELURUH rentang (train + test) sekaligus.
-        Berguna untuk plot overlapping antara actual dan predicted.
+        Forecast produk sebenarnya: SATU origin ("as of" hari ini/terbaru),
+        diperluas ke seluruh horizon (biasanya 14 hari) — target-nya adalah
+        masa depan sungguhan, jadi `actual` akan NaN.
         """
-        if self.model is None:
-            raise RuntimeError("Model has not been trained yet.")
-
-        X_all = df[self.feature_cols].copy()
-        y_all = df[TARGET_COL].copy()
-        y_pred = self.model.predict(X_all)
-
-        result = pd.DataFrame({
-            "timestamp":        df["timestamp"].values,
-            "actual":           y_all.values,
-            "predicted_actual": y_pred,
-            "recorded_actual":  y_all.values,
-            "is_train":         df["timestamp"] <= pd.to_datetime(self.end_train),
-        })
-        result["residual"] = result["actual"] - result["predicted_actual"]
+        result = self._predict_frame(df_live)
+        self.df_live_ = result
         return result
 
     # ──────────────────────────────────────────────────────────────────────────
     @staticmethod
-    def _log_metrics(y_true, y_pred, label: str = ""):
+    def _log_metrics(y_true, y_pred, label: str = "") -> Dict[str, float]:
         mae  = mean_absolute_error(y_true, y_pred)
         rmse = np.sqrt(mean_squared_error(y_true, y_pred))
         r2   = r2_score(y_true, y_pred)
-        # MAPE — hindari division by zero
-        mask = np.abs(y_true) > 0.01
-        mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if mask.sum() > 0 else np.nan
+        y_true_arr = np.asarray(y_true)
+        y_pred_arr = np.asarray(y_pred)
+        mask = np.abs(y_true_arr) > 0.01
+        mape = np.mean(np.abs((y_true_arr[mask] - y_pred_arr[mask]) / y_true_arr[mask])) * 100 if mask.sum() > 0 else np.nan
         logger.info(f"[Metrics-{label}] MAE={mae:.3f}°C | RMSE={rmse:.3f}°C | MAPE={mape:.2f}% | R²={r2:.4f}")
         return {"mae": mae, "rmse": rmse, "mape": mape, "r2": r2}
 
     def get_metrics(self) -> Dict[str, float]:
-        """Kembalikan metrics test set."""
-        if self.df_result_ is None:
-            raise RuntimeError("Run .predict() first.")
-        mask = ~self.df_result_["actual"].isna()
+        """Kembalikan metrics keseluruhan dari backtest terakhir."""
+        if self.df_backtest_ is None:
+            raise RuntimeError("Run .predict_backtest() first.")
+        mask = ~self.df_backtest_["actual"].isna()
         if mask.sum() == 0:
             return {}
         return self._log_metrics(
-            self.df_result_.loc[mask, "actual"].values,
-            self.df_result_.loc[mask, "predicted_actual"].values,
-            label="Final",
+            self.df_backtest_.loc[mask, "actual"].values,
+            self.df_backtest_.loc[mask, "predicted_actual"].values,
+            label="Backtest-Final",
         )
+
+    def metrics_by_horizon(self, df_backtest: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+        """
+        Metrik backtest per HARI horizon (1..14) — diagnostik utama untuk
+        memastikan model benar-benar berperilaku seperti forecast jarak
+        jauh (error naik seiring horizon), bukan persistence yang menyamar.
+        """
+        df = df_backtest if df_backtest is not None else self.df_backtest_
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        df = df.dropna(subset=["actual"]).copy()
+        if df.empty:
+            return pd.DataFrame()
+
+        df["horizon_day"] = ((df["horizon_h"] - 1) // 24 + 1).astype(int)
+
+        rows = []
+        for day, g in df.groupby("horizon_day"):
+            rows.append({
+                "horizon_day": int(day),
+                "n":           len(g),
+                "mae":         mean_absolute_error(g["actual"], g["predicted_actual"]),
+                "rmse":        float(np.sqrt(mean_squared_error(g["actual"], g["predicted_actual"]))),
+                "r2":          r2_score(g["actual"], g["predicted_actual"]) if len(g) > 1 else np.nan,
+            })
+        return pd.DataFrame(rows).sort_values("horizon_day").reset_index(drop=True)
 
     # ──────────────────────────────────────────────────────────────────────────
-    def plot_results(
+    @staticmethod
+    def _style_dark_axes(ax):
+        ax.set_facecolor("#1a1d27")
+        ax.tick_params(colors="white")
+        ax.spines[:].set_color("#2a2d3a")
+        ax.xaxis.label.set_color("white")
+        ax.yaxis.label.set_color("white")
+
+    def plot_skill_by_horizon(
         self,
-        df_full:        Optional[pd.DataFrame] = None,
-        last_n_days:    int = 90,
-        save:           bool = True,
-        show:           bool = False,
+        df_backtest: Optional[pd.DataFrame] = None,
+        save: bool = True,
+        show: bool = False,
     ) -> str:
         """
-        Plot tiga jalur:
-          1. actual           — nilai suhu aktual (garis biru)
-          2. predicted_actual — prediksi model (garis oranye putus-putus)
-          3. recorded_actual  — marker titik untuk nilai yang ter-record
-
-        Args:
-            df_full      : Hasil predict_full() — seluruh periode. Jika None,
-                           hanya menampilkan test window (self.df_result_).
-            last_n_days  : Batasi tampilan N hari terakhir (0 = tampilkan semua).
-            save         : Simpan gambar ke disk.
-            show         : Tampilkan jendela interaktif (False untuk server/notebook).
-
-        Returns:
-            Path file gambar (str).
+        Plot utama untuk memvalidasi bahwa ini forecast jarak jauh yang
+        jujur: MAE & RMSE per hari horizon (1..14). Error yang naik
+        bertahap = wajar; error yang flat/nyaris nol di semua hari = tanda
+        ada leakage.
         """
-        if df_full is None:
-            df_plot = self.df_result_.copy() if self.df_result_ is not None else pd.DataFrame()
-        else:
-            df_plot = df_full.copy()
-
-        if df_plot.empty:
-            logger.warning("[Plot] No data to plot.")
+        by_horizon = self.metrics_by_horizon(df_backtest)
+        if by_horizon.empty:
+            logger.warning("[Plot] No backtest data to plot skill-by-horizon.")
             return ""
 
-        # Filter N hari terakhir
-        if last_n_days > 0:
-            cutoff  = df_plot["timestamp"].max() - pd.Timedelta(days=last_n_days)
-            df_plot = df_plot[df_plot["timestamp"] >= cutoff]
+        fig, ax = plt.subplots(figsize=(11, 5.5), facecolor="#0f1117")
+        self._style_dark_axes(ax)
 
-        # ── Layout ──────────────────────────────────────────────────────────
-        fig, axes = plt.subplots(
-            3, 1,
-            figsize=(18, 13),
-            gridspec_kw={"height_ratios": [3, 1, 1]},
-            facecolor="#0f1117",
-        )
-        fig.suptitle(
-            f"Indonesia Temperature Forecast — Station: {self.station}\n"
-            f"Train through {self.end_train}  |  Target: {self.target_date}",
-            fontsize=14, color="white", fontweight="bold", y=1.01,
-        )
-
-        for ax in axes:
-            ax.set_facecolor("#1a1d27")
-            ax.tick_params(colors="white")
-            ax.spines[:].set_color("#2a2d3a")
-            ax.xaxis.label.set_color("white")
-            ax.yaxis.label.set_color("white")
-
-        # ── Panel 1: Perbandingan suhu ───────────────────────────────────────
-        ax1 = axes[0]
-        train_mask = df_plot.get("is_train", pd.Series(False, index=df_plot.index))
-
-        # Actual (garis biru)
-        ax1.plot(
-            df_plot["timestamp"], df_plot["actual"],
-            color="#4fc3f7", lw=1.2, alpha=0.85, label="Actual", zorder=2,
-        )
-        # Predicted (garis oranye putus-putus)
-        ax1.plot(
-            df_plot["timestamp"], df_plot["predicted_actual"],
-            color="#ffb74d", lw=1.5, ls="--", alpha=0.90, label="Predicted", zorder=3,
-        )
-        # Recorded actual (titik hijau sparse)
-        step = max(1, len(df_plot) // 300)
-        ax1.scatter(
-            df_plot["timestamp"].iloc[::step],
-            df_plot["recorded_actual"].iloc[::step],
-            color="#69f0ae", s=8, alpha=0.6, label="Recorded Actual", zorder=4,
-        )
-        # Shading train vs test
-        if "is_train" in df_plot.columns:
-            tr_end = df_plot.loc[df_plot["is_train"], "timestamp"].max()
-            if pd.notna(tr_end):
-                ax1.axvline(tr_end, color="#ef5350", lw=1.5, ls=":", alpha=0.8)
-                ax1.text(tr_end, ax1.get_ylim()[1] if ax1.get_ylim()[1] != 0 else 40,
-                         "  Train End", color="#ef5350", fontsize=8, va="top")
-
-        ax1.set_ylabel("Temperature (°C)", color="white")
-        ax1.legend(loc="upper right", facecolor="#2a2d3a", labelcolor="white", fontsize=9)
-        ax1.grid(True, alpha=0.15, color="gray")
-        ax1.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-        plt.setp(ax1.xaxis.get_majorticklabels(), rotation=30, ha="right")
-
-        # ── Panel 2: Residual ────────────────────────────────────────────────
-        ax2 = axes[1]
-        ax2.fill_between(
-            df_plot["timestamp"], df_plot["residual"], 0,
-            where=df_plot["residual"] >= 0,
-            color="#69f0ae", alpha=0.5, label="Over-estimate",
-        )
-        ax2.fill_between(
-            df_plot["timestamp"], df_plot["residual"], 0,
-            where=df_plot["residual"] < 0,
-            color="#ef5350", alpha=0.5, label="Under-estimate",
-        )
-        ax2.axhline(0, color="white", lw=0.8, alpha=0.5)
-        ax2.set_ylabel("Residual (°C)", color="white")
-        ax2.legend(loc="upper right", facecolor="#2a2d3a", labelcolor="white", fontsize=8)
-        ax2.grid(True, alpha=0.1, color="gray")
-        ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=30, ha="right")
-
-        # ── Panel 3: Feature Importance ──────────────────────────────────────
-        ax3 = axes[2]
-        imp = pd.DataFrame({
-            "feature":    self.feature_cols,
-            "importance": self.model.feature_importance(importance_type="gain"),
-        }).nlargest(15, "importance")
-
-        bars = ax3.barh(imp["feature"], imp["importance"], color="#7c4dff", alpha=0.8)
-        ax3.set_xlabel("Gain", color="white")
-        ax3.set_title("Top-15 Feature Importance (Gain)", color="white", fontsize=10)
-        ax3.invert_yaxis()
-        ax3.grid(True, axis="x", alpha=0.15, color="gray")
+        ax.plot(by_horizon["horizon_day"], by_horizon["mae"],
+                color="#4fc3f7", marker="o", lw=2, label="MAE (°C)")
+        ax.plot(by_horizon["horizon_day"], by_horizon["rmse"],
+                color="#ffb74d", marker="o", lw=2, label="RMSE (°C)")
+        ax.set_title(f"Backtest Skill vs Horizon Day — {self.station}", color="white", fontsize=13)
+        ax.set_xlabel("Horizon (days ahead)", color="white")
+        ax.set_ylabel("Error (°C)", color="white")
+        ax.set_xticks(by_horizon["horizon_day"])
+        ax.legend(facecolor="#2a2d3a", labelcolor="white")
+        ax.grid(True, alpha=0.15, color="gray")
 
         plt.tight_layout()
-
         out_path = ""
         if save:
-            fname    = f"{self.station.lower().replace(' ', '_')}_forecast.png"
+            fname = f"{self.station.lower().replace(' ', '_')}_skill_by_horizon.png"
             out_path = os.path.join(OUTPUT_DIR, fname)
             plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
-            logger.info(f"[Plot] Chart saved to: {out_path}")
-
+            logger.info(f"[Plot] Skill-by-horizon chart saved to: {out_path}")
         if show:
             plt.show()
         plt.close(fig)
         return out_path
 
-    # ──────────────────────────────────────────────────────────────────────────
-    def plot_forecast_horizon(
+    def plot_forecast_fan(
         self,
-        df_full: pd.DataFrame,
-        horizon_days: int = 7,
+        df_history: pd.DataFrame,
+        df_forecast: pd.DataFrame,
+        history_days: int = 21,
         save: bool = True,
         show: bool = False,
     ) -> str:
         """
-        Zoom-in grafik prediksi pada horizon beberapa hari ke depan.
+        Plot satu origin: histori aktual sebelum origin + kipas forecast
+        14 hari ke depan. Kalau df_forecast punya kolom 'actual' terisi
+        (origin backtest), aktual sungguhan ikut di-overlay untuk perbandingan.
+
+        Args:
+            df_history  : DataFrame timestamp/temperature aktual sebelum origin.
+            df_forecast : Hasil predict_live()/predict_backtest() untuk SATU origin.
         """
-        cutoff   = pd.to_datetime(self.end_train)
-        df_fore  = df_full[df_full["timestamp"] > cutoff].copy()
-        df_last  = df_full[
-            (df_full["timestamp"] > cutoff - pd.Timedelta(days=14)) &
-            (df_full["timestamp"] <= cutoff)
-        ].copy()
+        if df_forecast.empty:
+            logger.warning("[Plot] No forecast data to plot.")
+            return ""
+
+        origin = df_forecast["origin"].iloc[0]
+        cutoff = pd.to_datetime(origin) - pd.Timedelta(days=history_days)
+        hist   = df_history[(df_history["timestamp"] > cutoff) & (df_history["timestamp"] <= origin)]
 
         fig, ax = plt.subplots(figsize=(14, 6), facecolor="#0f1117")
-        ax.set_facecolor("#1a1d27")
-        ax.tick_params(colors="white")
-        ax.spines[:].set_color("#2a2d3a")
+        self._style_dark_axes(ax)
 
-        # Historical tail
-        ax.plot(df_last["timestamp"], df_last["actual"],
+        ax.plot(hist["timestamp"], hist[TARGET_COL],
                 color="#4fc3f7", lw=1.5, label="Historical Actual")
-        # Forecast
-        ax.plot(df_fore["timestamp"].iloc[:horizon_days*24],
-                df_fore["predicted_actual"].iloc[:horizon_days*24],
-                color="#ffb74d", lw=2, ls="--", label=f"Forecast ({horizon_days}d)")
+        ax.plot(df_forecast["timestamp"], df_forecast["predicted_actual"],
+                color="#ffb74d", lw=2, ls="--", label="Forecast (14d)")
         ax.fill_between(
-            df_fore["timestamp"].iloc[:horizon_days*24],
-            df_fore["predicted_actual"].iloc[:horizon_days*24] - 1.5,
-            df_fore["predicted_actual"].iloc[:horizon_days*24] + 1.5,
-            color="#ffb74d", alpha=0.15, label="±1.5°C CI",
+            df_forecast["timestamp"],
+            df_forecast["predicted_actual"] - 1.5,
+            df_forecast["predicted_actual"] + 1.5,
+            color="#ffb74d", alpha=0.15, label="±1.5°C band",
         )
-        ax.axvline(cutoff, color="#ef5350", lw=1.5, ls=":", label="Train End")
-        ax.set_title(
-            f"Forecast — Next {horizon_days} Days — {self.station}",
-            color="white", fontsize=13,
-        )
+        if "actual" in df_forecast.columns and df_forecast["actual"].notna().any():
+            ax.scatter(df_forecast["timestamp"], df_forecast["actual"],
+                       color="#69f0ae", s=10, alpha=0.7, label="Actual outcome (backtest)")
+
+        ax.axvline(pd.to_datetime(origin), color="#ef5350", lw=1.5, ls=":", label="Forecast Origin")
+        ax.set_title(f"14-Day Forecast from {pd.to_datetime(origin).date()} — {self.station}",
+                     color="white", fontsize=13)
         ax.set_ylabel("Temperature (°C)", color="white")
         ax.legend(facecolor="#2a2d3a", labelcolor="white")
         ax.grid(True, alpha=0.15, color="gray")
@@ -441,10 +360,45 @@ class TemperatureForecastModel:
         plt.tight_layout()
         out_path = ""
         if save:
-            fname    = f"{self.station.lower().replace(' ', '_')}_horizon.png"
+            fname = f"{self.station.lower().replace(' ', '_')}_forecast_fan.png"
             out_path = os.path.join(OUTPUT_DIR, fname)
             plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
-            logger.info(f"[Plot] Horizon chart saved to: {out_path}")
+            logger.info(f"[Plot] Forecast-fan chart saved to: {out_path}")
+        if show:
+            plt.show()
+        plt.close(fig)
+        return out_path
+
+    def plot_feature_importance(
+        self,
+        top_n: int = 15,
+        save: bool = True,
+        show: bool = False,
+    ) -> str:
+        """Top-N feature importance (gain) dari model terlatih."""
+        if self.model is None:
+            raise RuntimeError("Model has not been trained yet.")
+
+        imp = pd.DataFrame({
+            "feature":    self.feature_cols,
+            "importance": self.model.feature_importance(importance_type="gain"),
+        }).nlargest(top_n, "importance")
+
+        fig, ax = plt.subplots(figsize=(9, 7), facecolor="#0f1117")
+        self._style_dark_axes(ax)
+        ax.barh(imp["feature"], imp["importance"], color="#7c4dff", alpha=0.85)
+        ax.set_title(f"Top-{top_n} Feature Importance (Gain) — {self.station}", color="white", fontsize=12)
+        ax.set_xlabel("Gain", color="white")
+        ax.invert_yaxis()
+        ax.grid(True, axis="x", alpha=0.15, color="gray")
+
+        plt.tight_layout()
+        out_path = ""
+        if save:
+            fname = f"{self.station.lower().replace(' ', '_')}_feature_importance.png"
+            out_path = os.path.join(OUTPUT_DIR, fname)
+            plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
+            logger.info(f"[Plot] Feature importance chart saved to: {out_path}")
         if show:
             plt.show()
         plt.close(fig)
@@ -452,52 +406,84 @@ class TemperatureForecastModel:
 
     # ──────────────────────────────────────────────────────────────────────────
     def save_model(self, path: Optional[str] = None) -> str:
-        """Save the model to disk."""
+        """Simpan model + metadata (feature cols, climatology table) ke disk."""
         if self.model is None:
             raise RuntimeError("Model has not been trained yet.")
         if path is None:
-            path = os.path.join(
-                OUTPUT_DIR,
-                f"lgbm_{self.station.lower().replace(' ', '_')}.pkl",
-            )
-        joblib.dump({"model": self.model, "feature_cols": self.feature_cols,
-                     "end_train": self.end_train, "target_date": self.target_date}, path)
+            path = os.path.join(OUTPUT_DIR, f"lgbm_{self.station.lower().replace(' ', '_')}.pkl")
+        joblib.dump({
+            "model":        self.model,
+            "feature_cols": self.feature_cols,
+            "climatology":  self.climatology_,
+            "station":      self.station,
+            "end_train":    self.end_train,
+            "target_date":  self.target_date,
+        }, path)
         logger.info(f"[Model] Saved to: {path}")
         return path
 
     @classmethod
     def load_model(cls, path: str) -> "TemperatureForecastModel":
-        """Load a model from disk."""
-        data    = joblib.load(path)
-        obj     = cls(end_train=data["end_train"], target_date=data["target_date"])
-        obj.model        = data["model"]
-        obj.feature_cols = data["feature_cols"]
+        """Muat model dari disk."""
+        data = joblib.load(path)
+        obj  = cls(
+            station     = data.get("station", "Indonesia"),
+            end_train   = data.get("end_train"),
+            target_date = data.get("target_date"),
+        )
+        obj.model         = data["model"]
+        obj.feature_cols  = data["feature_cols"]
+        obj.climatology_  = data.get("climatology")
         logger.info(f"[Model] Loaded from: {path}")
         return obj
 
 
 # ─── Quick smoke test ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    from preprocessing import run_preprocessing
-
-    # Data dummy
-    np.random.seed(42)
-    dates  = pd.date_range("2022-01-01", periods=24 * 365, freq="h")
-    temps  = 27 + 3 * np.sin(2 * np.pi * dates.dayofyear / 365) + \
-             2 * np.sin(2 * np.pi * dates.hour / 24) + np.random.randn(len(dates)) * 0.5
-    df_raw = pd.DataFrame({"timestamp": dates, "temperature": temps,
-                            "humidity": 80.0, "wind_speed": 10.0})
-
-    df_proc = run_preprocessing(df_raw, station_name="Test")
-
-    mdl = TemperatureForecastModel(
-        end_train="2022-11-30",
-        target_date="2022-12-31",
-        station="Test",
+    from preprocessing import (
+        run_preprocessing, select_origins, build_climatology,
+        build_direct_horizon_frame, FORECAST_HORIZON_HOURS,
     )
-    mdl.fit(df_proc)
-    result  = mdl.predict()
-    df_full = mdl.predict_full(df_proc)
-    mdl.plot_results(df_full, last_n_days=60)
-    print("\nPrediksi selesai:")
-    print(result[["timestamp", "actual", "predicted_actual", "residual"]].tail(5))
+
+    np.random.seed(42)
+    dates = pd.date_range("2022-01-01", periods=24 * 500, freq="h")
+    temps = (27 + 3 * np.sin(2 * np.pi * dates.dayofyear / 365)
+                + 2 * np.sin(2 * np.pi * dates.hour / 24)
+                + np.random.randn(len(dates)) * 0.5)
+    df_raw = pd.DataFrame({
+        "timestamp": dates, "temperature": temps,
+        "humidity": 80.0, "wind_speed": 10.0, "precipitation": 0.0,
+    })
+
+    df_state = run_preprocessing(df_raw.copy(), station_name="Test")
+
+    end_train   = dates.max() - pd.Timedelta(days=45)
+    target_date = dates.max()
+
+    train_origins    = select_origins(df_state, end=end_train, stride_hours=24)
+    backtest_origins = select_origins(df_state, start=end_train, end=target_date - pd.Timedelta(hours=FORECAST_HORIZON_HOURS), stride_hours=24)
+
+    clim = build_climatology(df_raw, as_of=end_train)
+
+    df_train    = build_direct_horizon_frame(df_state, df_raw, train_origins, clim)
+    df_backtest = build_direct_horizon_frame(df_state, df_raw, backtest_origins, clim)
+
+    mdl = TemperatureForecastModel(station="Test", end_train=str(end_train.date()), target_date=str(target_date.date()))
+    mdl.climatology_ = clim
+    mdl.fit(df_train)
+
+    result = mdl.predict_backtest(df_backtest)
+    print("\nBacktest skill by horizon day:")
+    print(mdl.metrics_by_horizon().to_string(index=False))
+
+    # Live forecast from the very latest origin available.
+    live_origin = select_origins(df_state, stride_hours=1).iloc[[-1]]
+    df_live = build_direct_horizon_frame(df_state, df_raw, live_origin, clim)
+    live_result = mdl.predict_live(df_live)
+    print(f"\nLive forecast rows: {len(live_result)} (actual should be all NaN — real future)")
+    print(live_result.head(3).to_string())
+
+    mdl.plot_skill_by_horizon(result)
+    mdl.plot_forecast_fan(df_raw, live_result)
+    mdl.plot_feature_importance()
+    print("\nSmoke test complete.")
