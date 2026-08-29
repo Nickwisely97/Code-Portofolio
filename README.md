@@ -1,0 +1,45 @@
+# Code Portfolio — Nick Wisely
+
+Applied data science / ML projects, organized by technique rather than by industry — mirroring the **Statistical & ML Modeling** skill categories on my CV, so each folder maps directly to a claim there.
+
+## Project/ — applied case studies
+
+### Forecasting & Predictive Modeling
+| Project | Technique | CV skill |
+|---|---|---|
+| [HR Attrition — Classification & Survival Analysis](<Project/Forecasting & Predictive Modeling/HR Attrition - Classification & Survival Analysis>) | Classification (LogReg/RF/GB) + Cox Proportional Hazards | Survival & Reliability Analysis |
+| [Temperature Forecast — LightGBM Multi-Horizon](<Project/Forecasting & Predictive Modeling/Temperature Forecast - LightGBM Multi-Horizon>) | LightGBM, direct multi-horizon time-series | Forecasting & Time-Series |
+
+### Optimization & Operations Research
+| Project | Technique | CV skill |
+|---|---|---|
+| [Staffing Optimization — Linear Programming](<Project/Optimization & Operations Research/Staffing Optimization - Linear Programming>) | Integer LP (PuLP) | Queueing/Staffing Models |
+
+### Segmentation & Recommendation
+| Project | Technique | CV skill |
+|---|---|---|
+| [Movie Recommendation — Collaborative Filtering](<Project/Segmentation & Recommendation/Movie Recommendation - Collaborative Filtering>) | User-user cosine similarity | general ML (⚠ toy dataset, upgrade planned) |
+
+### Game Analysis
+Board games used as a **public, non-confidential stand-in** for the kind of structured decision-modeling and stochastic-process work I do professionally — same techniques, no proprietary data.
+
+| Project | Technique | Represents |
+|---|---|---|
+| [Congklak — Minimax & Alpha-Beta Search](<Project/Game Analysis/Congklak - Minimax & Alpha-Beta Search>) | Adversarial search, tournament simulation | Algorithmic decision modeling |
+| [Snake and Ladder — Markov Chain Analysis](<Project/Game Analysis/Snake and Ladder - Markov Chain Analysis>) | Absorbing Markov chains | Stochastic-process modeling |
+| [Tournament Bracket — Score Tracker](<Project/Game Analysis/Tournament Bracket - Score Tracker>) | HTML/JS utility | (planned upgrade → Swiss-pairing LP optimizer) |
+
+## Machine Learning Concept/ — standalone technique demos
+
+Kept separate from `Project/` for now; each is flagged for future integration into an applied project rather than staying a bare demo (see each folder's README):
+
+- [K-Means Clustering](<Machine Learning Concept/K-Means Clustering>) — planned merge → applied Segmentation project
+- [Principal Component Analysis — PCA](<Machine Learning Concept/Principal Component Analysis - PCA>) — planned merge → applied Segmentation project
+- [Regularization](<Machine Learning Concept/Regularization>) — planned merge → Temperature Forecast baseline-comparison appendix
+
+## Gaps vs. CV (tracked, not yet built)
+A few CV skills aren't represented in code yet: Erlang C, Discrete Event Simulation, Weibull/reliability analysis, Trigram TF-IDF duplicate detection, RFM segmentation, formal A/B testing. Planned as new Game Analysis or Optimization entries.
+
+## Conventions
+- Every project folder: `code/`, optionally `data/` and `result/`, a `README.md`, and a `requirements.txt` where it has external dependencies.
+- Notebook/script filenames are snake_case and match the project's subject, no prefixes.
