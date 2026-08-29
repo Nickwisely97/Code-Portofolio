@@ -18,6 +18,7 @@ Applied data science / ML projects, organized by technique rather than by indust
 ### Segmentation & Recommendation
 | Project | Technique | CV skill |
 |---|---|---|
+| [K-Means Clustering — Customer Complaint Segmentation](<Project/Segmentation & Recommendation/K-Means Clustering - Complaint Segmentation>) | K-Means, Elbow Method | Unsupervised segmentation |
 | [Movie Recommendation — Collaborative Filtering](<Project/Segmentation & Recommendation/Movie Recommendation - Collaborative Filtering>) | User-user cosine similarity | general ML (⚠ toy dataset, upgrade planned) |
 
 ### Game Analysis
@@ -33,9 +34,10 @@ Board games used as a **public, non-confidential stand-in** for the kind of stru
 
 Kept separate from `Project/` for now; each is flagged for future integration into an applied project rather than staying a bare demo (see each folder's README):
 
-- [K-Means Clustering](<Machine Learning Concept/K-Means Clustering>) — planned merge → applied Segmentation project
 - [Principal Component Analysis — PCA](<Machine Learning Concept/Principal Component Analysis - PCA>) — planned merge → applied Segmentation project
 - [Regularization](<Machine Learning Concept/Regularization>) — planned merge → Temperature Forecast baseline-comparison appendix
+
+(K-Means Clustering has already made this move — see Segmentation & Recommendation above.)
 
 ## Gaps vs. CV (tracked, not yet built)
 A few CV skills aren't represented in code yet: Erlang C, Discrete Event Simulation, Weibull/reliability analysis, Trigram TF-IDF duplicate detection, RFM segmentation, formal A/B testing. Planned as new Game Analysis or Optimization entries.
