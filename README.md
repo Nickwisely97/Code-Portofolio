@@ -18,8 +18,8 @@ Applied data science / ML projects, organized by technique rather than by indust
 ### Segmentation & Recommendation
 | Project | Technique | CV skill |
 |---|---|---|
-| [K-Means Clustering — Customer Complaint Segmentation](<Project/Segmentation & Recommendation/K-Means Clustering - Complaint Segmentation>) | K-Means, Elbow Method | Unsupervised segmentation |
-| [Movie Recommendation — Collaborative Filtering](<Project/Segmentation & Recommendation/Movie Recommendation - Collaborative Filtering>) | User-user cosine similarity | general ML (⚠ toy dataset, upgrade planned) |
+| [K-Means Clustering — Customer Complaint Segmentation](<Project/Segmentation & Recommendation/K-Means Clustering - Complaint Segmentation>) | K-Means Clustering, Elbow Method | Unsupervised segmentation |
+| [Wine Recommendation — K-Nearest Neighbors](<Project/Segmentation & Recommendation/Wine Recommendation - K-Nearest Neighbors>) | K-Nearest Neighbors (cosine similarity on standardized chemical attributes), validated with precision@k | general ML |
 
 ### Game Analysis
 Board games used as a **public, non-confidential stand-in** for the kind of structured decision-modeling and stochastic-process work I do professionally — same techniques, no proprietary data.
