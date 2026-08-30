@@ -3,6 +3,5 @@ numpy
 matplotlib
 seaborn
 scikit-learn
-scipy
 lifelines
 python-pptx
