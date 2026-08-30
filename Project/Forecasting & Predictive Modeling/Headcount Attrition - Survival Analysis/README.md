@@ -1,4 +1,4 @@
-# HR Attrition — Classification & Survival Analysis
+# Headcount Attrition - Survival Analysis
 
 **CV skill represented:** Survival & Reliability Analysis (Cox Proportional Hazards), Applied Statistics (log-rank test), classification model comparison & tuning.
 

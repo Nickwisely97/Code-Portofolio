@@ -7,7 +7,7 @@ Applied data science / ML projects, organized by technique rather than by indust
 ### Forecasting & Predictive Modeling
 | Project | Technique | CV skill |
 |---|---|---|
-| [HR Attrition — Classification & Survival Analysis](<Project/Forecasting & Predictive Modeling/HR Attrition - Classification & Survival Analysis>) | Classification (LogReg/RF/GB) + Cox Proportional Hazards | Survival & Reliability Analysis |
+| [Headcount Attrition - Survival Analysis](<Project/Forecasting & Predictive Modeling/Headcount Attrition - Survival Analysis>) | Classification (LogReg/RF/GB) + Cox Proportional Hazards | Survival & Reliability Analysis |
 | [Temperature Forecast — LightGBM Multi-Horizon](<Project/Forecasting & Predictive Modeling/Temperature Forecast - LightGBM Multi-Horizon>) | LightGBM, direct multi-horizon time-series | Forecasting & Time-Series |
 
 ### Optimization & Operations Research
