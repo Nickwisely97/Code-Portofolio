@@ -108,7 +108,7 @@ def _phrase(feat, hr, surv_df):
 
 
 def build_executive_report(df, surv_df, current, at_risk, significant, test_cindex, cph_val, lr,
-                            cox_forest_path, km_img_path, risk_dist_path, output_dir):
+                            hazard_bar_path, km_img_path, risk_dist_path, output_dir):
     """Build the 5-slide executive deck and save it as
     Executive_Attrition_Report_<YYYYMMDD>.pptx in output_dir. Returns the saved path."""
     top_factor = significant.index[0]
@@ -150,8 +150,8 @@ def build_executive_report(df, surv_df, current, at_risk, significant, test_cind
 
     # --- Slide 2: What Drives Attrition ---
     s2 = new_slide(prs, "What Drives Attrition", 2)
-    add_eyebrow(s2, MARGIN, 1.58, 4.17, "COEFFICIENT PLOT")
-    s2.shapes.add_picture(cox_forest_path, Inches(MARGIN), Inches(1.92), width=Inches(5.5))
+    add_eyebrow(s2, MARGIN, 1.58, 4.17, "HAZARD RATIO PLOT")
+    s2.shapes.add_picture(hazard_bar_path, Inches(MARGIN), Inches(1.92), width=Inches(5.5))
 
     side_left = 6.28
     add_eyebrow(s2, side_left, 1.58, 3.33, "HAZARD RATIOS")
@@ -162,7 +162,7 @@ def build_executive_report(df, surv_df, current, at_risk, significant, test_cind
         runs.append((feat, 14, True, NAVY, False))
         runs.append((f"x{hr:.2f} hazard  ·  p = {row['p']:.3f}", 14, False, _hazard_color(hr), False))
     _text(s2, side_left + 0.28, 2.11, 2.72, 3.18, runs)
-    add_footnote(s2, MARGIN, 6.17, 5.5, "Hazard ratio above 1.0 raises resignation risk; below 1.0 lowers it. Forest plot shows 95% confidence intervals.")
+    add_footnote(s2, MARGIN, 6.17, 5.5, "Hazard ratio above 1.0 raises resignation risk (red); below 1.0 lowers it (green). 1.0 = no effect.")
 
     # --- Slide 3: Retention by Overtime Status ---
     s3 = new_slide(prs, "Retention by Overtime Status", 3)
