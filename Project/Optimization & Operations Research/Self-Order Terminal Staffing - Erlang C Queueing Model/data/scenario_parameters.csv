@@ -1,0 +1,3 @@
+scenario,servers,aht_base_seconds,aht_per_item_seconds
+Human Cashier,2,35,7
+Self-Order Terminal (SOT),4,60,8

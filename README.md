@@ -14,6 +14,7 @@ Applied data science / ML projects, organized by technique rather than by indust
 | Project | Technique | CV skill |
 |---|---|---|
 | [Staffing Optimization — Linear Programming](<Project/Optimization & Operations Research/Staffing Optimization - Linear Programming>) | Integer LP (PuLP) | Queueing/Staffing Models |
+| [Self-Order Terminal Staffing — Erlang C Queueing Model](<Project/Optimization & Operations Research/Self-Order Terminal Staffing - Erlang C Queueing Model>) | Discrete-Event Simulation (SimPy), tandem M/M/c queues, P99 SLA | Queueing/Staffing Models, Discrete Event Simulation |
 
 ### Segmentation & Recommendation
 | Project | Technique | CV skill |
@@ -40,7 +41,7 @@ Kept separate from `Project/` for now; each is flagged for future integration in
 (K-Means Clustering has already made this move — see Segmentation & Recommendation above.)
 
 ## Gaps vs. CV (tracked, not yet built)
-A few CV skills aren't represented in code yet: Erlang C, Discrete Event Simulation, Weibull/reliability analysis, Trigram TF-IDF duplicate detection, RFM segmentation, formal A/B testing. Planned as new Game Analysis or Optimization entries.
+A few CV skills aren't represented in code yet: Weibull/reliability analysis, Trigram TF-IDF duplicate detection, RFM segmentation, formal A/B testing. Planned as new Game Analysis or Optimization entries.
 
 ## Conventions
 - Every project folder: `code/`, optionally `data/` and `result/`, a `README.md`, and a `requirements.txt` where it has external dependencies.
