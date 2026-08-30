@@ -4,7 +4,7 @@
 
 Split into two notebooks by concern, run in order:
 
-1. **`code/text_feature_engineering.ipynb`** — data preparation: turns real, unlabeled text (20 Newsgroups, reframed as 7 complaint/support-ticket topics: PC Hardware, Mac Hardware, Automotive, Motorcycle/Vehicle, Health/Medical Product, Electronics Product, Billing/Marketplace) into a numeric feature matrix. Saves `data/complaint_features.parquet` for the K-Means notebook to load.
+1. **`code/text_feature_engineering.ipynb`** — data preparation: turns real, unlabeled text (20 Newsgroups, reframed as 7 complaint/support-ticket topics: PC Hardware, Mac Hardware, Automotive, Motorcycle/Vehicle, Health/Medical Product, Electronics Product, Billing/Marketplace) into a numeric feature matrix. Saves `data/complaint_features.parquet` and `data/complaint_topics_subset.parquet` for the K-Means notebook to load — kept in the repo not just as a byproduct but as the reproducible record of how those two files were built.
 2. **`code/kmeans_algorithms.ipynb`** — the actual K-Means demo, and the point of this project: what the algorithm does, choosing `k` with the Elbow Method (without peeking at ground truth), fitting, and evaluating the result against the true labels (ARI = 0.29, NMI = 0.39), interpreted through a cluster-vs-category heatmap and by reading real example complaints per cluster.
 
 Kept as two files rather than one so the K-Means notebook stays entirely about K-Means — how the input features were engineered is a separate, earlier step with its own reasoning, deliberately kept out of this notebook.
