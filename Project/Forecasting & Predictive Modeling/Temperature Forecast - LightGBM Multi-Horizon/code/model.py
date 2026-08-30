@@ -1,19 +1,19 @@
 """
 model.py
-LightGBM model untuk prediksi suhu temperatur di Indonesia.
+LightGBM model for Indonesian temperature forecasting.
 
-Model ini adalah "direct multi-horizon": satu model memprediksi suhu pada
-jam manapun dari 1 sampai `horizon_hours` ke depan dari sebuah forecast
-origin T0 sekaligus, dengan `horizon_h` sebagai salah satu fitur. Data
-latih/evaluasi/live-forecast dibangun di preprocessing.py
-(build_direct_horizon_frame) — kelas di sini murni urusan training,
-prediksi, metrik, dan plotting terhadap frame yang sudah jadi.
+This model is "direct multi-horizon": one model predicts temperature at
+any hour from 1 to `horizon_hours` ahead of a forecast origin T0 at once,
+with `horizon_h` as one of the features. Train/eval/live-forecast data is
+built in preprocessing.py (build_direct_horizon_frame) -- the class here
+is purely about training, prediction, metrics, and plotting against an
+already-built frame.
 
 Output:
-  - Model terlatih
-  - Metrik backtest (walk-forward, per hari horizon)
-  - Forecast live (14 hari ke depan dari origin terbaru)
-  - Grafik: skill vs horizon, forecast fan, feature importance
+  - Trained model
+  - Backtest metrics (walk-forward, per horizon day)
+  - Live forecast (14 days ahead from the latest origin)
+  - Charts: skill vs. horizon, forecast fan, feature importance
 """
 
 import os
@@ -35,7 +35,7 @@ from preprocessing import get_feature_columns, TARGET_COL
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# ─── Default Hyperparameters LightGBM ───────────────────────────────────────
+# ─── Default LightGBM Hyperparameters ───────────────────────────────────────
 DEFAULT_LGBM_PARAMS = {
     "objective":        "regression",
     "metric":           ["mae", "rmse"],
@@ -58,17 +58,17 @@ DEFAULT_LGBM_PARAMS = {
 OUTPUT_DIR = "result"
 
 
-# ─── Kelas Model ─────────────────────────────────────────────────────────────
+# ─── Model Class ─────────────────────────────────────────────────────────────
 class TemperatureForecastModel:
     """
     LightGBM direct multi-horizon temperature forecasting model.
 
     Parameters
     ----------
-    station     : str  — Nama stasiun (untuk label grafik dan penyimpanan file)
-    end_train   : str  — Metadata label saja (batas origin training), untuk judul grafik
-    target_date : str  — Metadata label saja (batas jendela backtest), untuk judul grafik
-    lgbm_params : dict — Hyperparameter LightGBM (opsional, override default)
+    station     : str  — Station name (for chart labels and file naming)
+    end_train   : str  — Metadata label only (training origin cutoff), for chart titles
+    target_date : str  — Metadata label only (backtest window cutoff), for chart titles
+    lgbm_params : dict — LightGBM hyperparameters (optional, overrides the default)
     """
 
     def __init__(
@@ -89,11 +89,15 @@ class TemperatureForecastModel:
         self.df_backtest_   = None
         self.df_live_       = None
 
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        station_slug = self.station.lower().replace(" ", "_")
+        self.output_dir  = os.path.join(OUTPUT_DIR, "city_detail_result", station_slug)
+        self.figures_dir = os.path.join(OUTPUT_DIR, "figures", station_slug)
+        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.figures_dir, exist_ok=True)
 
     # ──────────────────────────────────────────────────────────────────────────
     def _prepare_xy(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series]:
-        """Pisahkan X (features) dan y (target) dari DataFrame."""
+        """Split X (features) and y (target) out of a DataFrame."""
         X = df[self.feature_cols].copy()
         y = df[TARGET_COL].copy()
         return X, y
@@ -101,16 +105,24 @@ class TemperatureForecastModel:
     # ──────────────────────────────────────────────────────────────────────────
     def fit(self, df_train: pd.DataFrame) -> "TemperatureForecastModel":
         """
-        Latih model LightGBM pada direct-horizon training frame (hasil
-        preprocessing.build_direct_horizon_frame, semua barisnya punya
-        actual/y karena origin-nya cukup lama).
+        Train the LightGBM model on a direct-horizon training frame (output
+        of preprocessing.build_direct_horizon_frame -- every row has an
+        actual/y value since its origin is old enough).
 
-        Validasi dipisah per ORIGIN (bukan per baris): 10% origin paling
-        akhir ditahan sebagai validation set, supaya baris-baris satu
-        origin yang sama tidak bocor antara train dan validation.
+        Validation is split per ORIGIN (not per row): the most recent 10%
+        of origins are held out as the validation set, so rows from the
+        same origin never leak between train and validation.
         """
         if df_train.empty:
             raise ValueError("Training dataset is empty. Check origin selection / date range.")
+
+        n_before = len(df_train)
+        df_train = df_train.dropna(subset=[TARGET_COL])
+        n_dropped = n_before - len(df_train)
+        if n_dropped:
+            logger.info(f"[Model] Dropped {n_dropped} rows with missing target (source data gaps > interpolation limit)")
+        if df_train.empty:
+            raise ValueError("Training dataset is empty after dropping missing targets. Check source data coverage.")
 
         self.feature_cols = get_feature_columns(df_train)
         logger.info(f"[Model] Feature columns: {len(self.feature_cols)} features")
@@ -157,7 +169,7 @@ class TemperatureForecastModel:
 
     # ──────────────────────────────────────────────────────────────────────────
     def _predict_frame(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Prediksi mentah untuk sebuah direct-horizon frame, apa adanya."""
+        """Raw prediction for a direct-horizon frame, as given."""
         if self.model is None:
             raise RuntimeError("Model has not been trained yet. Run .fit() first.")
         if df.empty:
@@ -175,9 +187,9 @@ class TemperatureForecastModel:
 
     def predict_backtest(self, df_backtest: pd.DataFrame) -> pd.DataFrame:
         """
-        Prediksi + evaluasi untuk sebuah backtest frame (rollback testing):
-        banyak origin historis, masing-masing dengan target yang sudah
-        benar-benar terjadi, jadi bisa dibandingkan dengan actual.
+        Predict + evaluate for a backtest frame (rollback testing): many
+        historical origins, each with a target that has already happened,
+        so it can be compared against the actual value.
         """
         result = self._predict_frame(df_backtest)
         if result.empty:
@@ -193,9 +205,9 @@ class TemperatureForecastModel:
 
     def predict_live(self, df_live: pd.DataFrame) -> pd.DataFrame:
         """
-        Forecast produk sebenarnya: SATU origin ("as of" hari ini/terbaru),
-        diperluas ke seluruh horizon (biasanya 14 hari) — target-nya adalah
-        masa depan sungguhan, jadi `actual` akan NaN.
+        The actual forecast product: ONE origin ("as of" today/latest),
+        expanded across the full horizon (usually 14 days) -- the target is
+        genuinely in the future, so `actual` will be NaN.
         """
         result = self._predict_frame(df_live)
         self.df_live_ = result
@@ -215,7 +227,7 @@ class TemperatureForecastModel:
         return {"mae": mae, "rmse": rmse, "mape": mape, "r2": r2}
 
     def get_metrics(self) -> Dict[str, float]:
-        """Kembalikan metrics keseluruhan dari backtest terakhir."""
+        """Return the overall metrics from the last backtest run."""
         if self.df_backtest_ is None:
             raise RuntimeError("Run .predict_backtest() first.")
         mask = ~self.df_backtest_["actual"].isna()
@@ -229,9 +241,9 @@ class TemperatureForecastModel:
 
     def metrics_by_horizon(self, df_backtest: Optional[pd.DataFrame] = None) -> pd.DataFrame:
         """
-        Metrik backtest per HARI horizon (1..14) — diagnostik utama untuk
-        memastikan model benar-benar berperilaku seperti forecast jarak
-        jauh (error naik seiring horizon), bukan persistence yang menyamar.
+        Backtest metrics per horizon DAY (1..14) -- the main diagnostic for
+        confirming the model genuinely behaves like a long-range forecast
+        (error rising with horizon), not persistence in disguise.
         """
         df = df_backtest if df_backtest is not None else self.df_backtest_
         if df is None or df.empty:
@@ -270,10 +282,10 @@ class TemperatureForecastModel:
         show: bool = False,
     ) -> str:
         """
-        Plot utama untuk memvalidasi bahwa ini forecast jarak jauh yang
-        jujur: MAE & RMSE per hari horizon (1..14). Error yang naik
-        bertahap = wajar; error yang flat/nyaris nol di semua hari = tanda
-        ada leakage.
+        Main plot for validating that this is an honest long-range
+        forecast: MAE & RMSE per horizon day (1..14). Error that rises
+        gradually is expected; error that's flat/near-zero at every day is
+        a sign of leakage.
         """
         by_horizon = self.metrics_by_horizon(df_backtest)
         if by_horizon.empty:
@@ -297,8 +309,7 @@ class TemperatureForecastModel:
         plt.tight_layout()
         out_path = ""
         if save:
-            fname = f"{self.station.lower().replace(' ', '_')}_skill_by_horizon.png"
-            out_path = os.path.join(OUTPUT_DIR, fname)
+            out_path = os.path.join(self.figures_dir, "skill_by_horizon.png")
             plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
             logger.info(f"[Plot] Skill-by-horizon chart saved to: {out_path}")
         if show:
@@ -315,13 +326,13 @@ class TemperatureForecastModel:
         show: bool = False,
     ) -> str:
         """
-        Plot satu origin: histori aktual sebelum origin + kipas forecast
-        14 hari ke depan. Kalau df_forecast punya kolom 'actual' terisi
-        (origin backtest), aktual sungguhan ikut di-overlay untuk perbandingan.
+        Single-origin plot: actual history before the origin + the 14-day
+        forecast fan. If df_forecast has a filled 'actual' column (a
+        backtest origin), the real outcome is overlaid for comparison.
 
         Args:
-            df_history  : DataFrame timestamp/temperature aktual sebelum origin.
-            df_forecast : Hasil predict_live()/predict_backtest() untuk SATU origin.
+            df_history  : DataFrame of actual timestamp/temperature before the origin.
+            df_forecast : Output of predict_live()/predict_backtest() for ONE origin.
         """
         if df_forecast.empty:
             logger.warning("[Plot] No forecast data to plot.")
@@ -360,8 +371,7 @@ class TemperatureForecastModel:
         plt.tight_layout()
         out_path = ""
         if save:
-            fname = f"{self.station.lower().replace(' ', '_')}_forecast_fan.png"
-            out_path = os.path.join(OUTPUT_DIR, fname)
+            out_path = os.path.join(self.figures_dir, "forecast_fan.png")
             plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
             logger.info(f"[Plot] Forecast-fan chart saved to: {out_path}")
         if show:
@@ -375,7 +385,7 @@ class TemperatureForecastModel:
         save: bool = True,
         show: bool = False,
     ) -> str:
-        """Top-N feature importance (gain) dari model terlatih."""
+        """Top-N feature importance (gain) from the trained model."""
         if self.model is None:
             raise RuntimeError("Model has not been trained yet.")
 
@@ -395,8 +405,7 @@ class TemperatureForecastModel:
         plt.tight_layout()
         out_path = ""
         if save:
-            fname = f"{self.station.lower().replace(' ', '_')}_feature_importance.png"
-            out_path = os.path.join(OUTPUT_DIR, fname)
+            out_path = os.path.join(self.figures_dir, "feature_importance.png")
             plt.savefig(out_path, dpi=150, bbox_inches="tight", facecolor=fig.get_facecolor())
             logger.info(f"[Plot] Feature importance chart saved to: {out_path}")
         if show:
@@ -406,11 +415,11 @@ class TemperatureForecastModel:
 
     # ──────────────────────────────────────────────────────────────────────────
     def save_model(self, path: Optional[str] = None) -> str:
-        """Simpan model + metadata (feature cols, climatology table) ke disk."""
+        """Save the model + metadata (feature cols, climatology table) to disk."""
         if self.model is None:
             raise RuntimeError("Model has not been trained yet.")
         if path is None:
-            path = os.path.join(OUTPUT_DIR, f"lgbm_{self.station.lower().replace(' ', '_')}.pkl")
+            path = os.path.join(self.output_dir, "lgbm_model.pkl")
         joblib.dump({
             "model":        self.model,
             "feature_cols": self.feature_cols,
@@ -424,7 +433,7 @@ class TemperatureForecastModel:
 
     @classmethod
     def load_model(cls, path: str) -> "TemperatureForecastModel":
-        """Muat model dari disk."""
+        """Load a model from disk."""
         data = joblib.load(path)
         obj  = cls(
             station     = data.get("station", "Indonesia"),

@@ -1,17 +1,17 @@
 """
 main_bmkg_forecast.py
-Orchestrator utama pipeline prediksi temperatur Indonesia menggunakan data BMKG
-dan Open-Meteo.
+Main orchestrator for the Indonesian temperature forecast pipeline, using
+BMKG and Open-Meteo data.
 
-Pipeline (direct multi-horizon, forecast origin based):
-  1. Tarik data (BMKG forecast + Open-Meteo historical)
-  2. Preprocessing -> tabel origin-state per stasiun
-  3. Bangun dataset: training origins (<= END_TRAIN), backtest origins
-     (END_TRAIN..TARGET_DATE, rollback testing), dan satu live origin
-     (default: data terbaru yang tersedia)
-  4. Latih model LightGBM (satu model per stasiun, horizon_h sebagai fitur)
-  5. Backtest walk-forward + forecast live 14 hari ke depan
-  6. Plot hasil (skill vs horizon, forecast fan, feature importance) & simpan output
+Pipeline (direct multi-horizon, forecast-origin based):
+  1. Fetch data (BMKG forecast + Open-Meteo historical)
+  2. Preprocessing -> origin-state table per station
+  3. Build datasets: training origins (<= END_TRAIN), backtest origins
+     (END_TRAIN..TARGET_DATE, rollback testing), and one live origin
+     (default: the latest available data)
+  4. Train the LightGBM model (one model per station, horizon_h as a feature)
+  5. Walk-forward backtest + live 14-day-ahead forecast
+  6. Plot results (skill vs. horizon, forecast fan, feature importance) & save output
 """
 
 import os
@@ -21,7 +21,7 @@ import pandas as pd
 import numpy as np
 from typing import Optional, Dict
 
-# ── Import modul lokal ─────────────────────────────────────────────────────
+# ── Local module imports ─────────────────────────────────────────────────────
 from data_fetcher   import fetch_all_stations, STATIONS
 from preprocessing  import (
     run_preprocessing, select_origins, build_climatology,
@@ -37,50 +37,49 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ── Konfigurasi default ───────────────────────────────────────────────────────
+# ── Default configuration ───────────────────────────────────────────────────────
 DEFAULT_CONFIG = {
-    # Batas akhir origin training. None = otomatis: data terbaru dikurangi
-    # TRAIN_BACKTEST_BUFFER_DAYS, supaya selalu relatif terhadap data yang
-    # benar-benar tersedia dan tidak pernah basi seperti tanggal hardcoded.
+    # Training origin cutoff. None = automatic: latest data minus
+    # TRAIN_BACKTEST_BUFFER_DAYS, so it's always relative to data that's
+    # actually available and never goes stale like a hardcoded date.
     "END_TRAIN":          None,
 
-    # Batas akhir jendela backtest (rollback testing). None = data terbaru
-    # yang tersedia.
+    # Backtest window cutoff (rollback testing). None = latest available data.
     "TARGET_DATE":        None,
 
-    # Stasiun yang dijalankan.
-    "STATIONS":           ["Jakarta", "Surabaya", "Bandung"],
+    # Stations to run.
+    "STATIONS":           ["Jakarta", "Surabaya", "Bandung", "Medan", "Semarang"],
 
-    # Mulai tarik data historis dari tanggal ini.
+    # Pull historical data starting from this date.
     "HISTORICAL_START":   "2019-01-01",
 
-    # Paksa re-fetch data meski cache sudah ada.
+    # Force re-fetch even if a cache already exists.
     "FORCE_REFRESH":      False,
 
-    # Simpan model setelah training.
+    # Save the model after training.
     "SAVE_MODEL":         True,
 
-    # Tampilkan grafik interaktif (set True jika ada display).
+    # Show interactive plots (set True if a display is available).
     "SHOW_PLOTS":         False,
 
     # Output directory.
     "OUTPUT_DIR":         "result",
 
-    # Jarak antar forecast origin saat membangun training/backtest set (jam).
+    # Spacing between forecast origins when building the training/backtest set (hours).
     "ORIGIN_STRIDE_HOURS": 24,
 
-    # Berapa jam ke depan diprediksi dari tiap origin (336 = 14 hari).
+    # Hours ahead predicted from each origin (336 = 14 days).
     "FORECAST_HORIZON_HOURS": 336,
 
-    # Jarak default END_TRAIN dari TARGET_DATE saat END_TRAIN=None, supaya
-    # ada cukup ruang untuk origin backtest antara keduanya.
+    # Default gap between END_TRAIN and TARGET_DATE when END_TRAIN=None, so
+    # there's enough room for backtest origins between the two.
     "TRAIN_BACKTEST_BUFFER_DAYS": 45,
 
-    # Origin untuk forecast live (produk 14-hari-ke-depan). None = data
-    # terbaru yang tersedia per stasiun ("as of sekarang").
+    # Origin for the live forecast (the 14-day-ahead product). None = the
+    # latest available data per station ("as of now").
     "LIVE_ORIGIN":        None,
 
-    # Hyperparameter LightGBM (override jika diperlukan).
+    # LightGBM hyperparameters (override if needed).
     "LGBM_PARAMS":        None,
 }
 
@@ -88,9 +87,9 @@ DEFAULT_CONFIG = {
 # ─────────────────────────────────────────────────────────────────────────────
 def resolve_dates(raw_data: Dict[str, pd.DataFrame], end_train, target_date, buffer_days: int) -> tuple:
     """
-    Tentukan END_TRAIN/TARGET_DATE final. Kalau salah satu None, turunkan
-    dari data terbaru yang benar-benar tersedia (bukan tanggal hardcoded)
-    supaya pipeline tidak pernah menjalankan backtest yang sudah basi.
+    Determine the final END_TRAIN/TARGET_DATE. If either is None, derive it
+    from the latest data actually available (not a hardcoded date) so the
+    pipeline never runs a stale backtest.
     """
     latest = max(
         (df["timestamp"].max() for df in raw_data.values() if not df.empty),
@@ -106,7 +105,7 @@ def resolve_dates(raw_data: Dict[str, pd.DataFrame], end_train, target_date, buf
 
 
 def validate_dates(end_train: str, target_date: str, horizon_hours: int):
-    """Pastikan ada cukup jarak antara END_TRAIN dan TARGET_DATE untuk backtest penuh."""
+    """Make sure there's enough gap between END_TRAIN and TARGET_DATE for a full backtest."""
     et = pd.to_datetime(end_train)
     td = pd.to_datetime(target_date)
     min_gap = pd.Timedelta(hours=horizon_hours)
@@ -128,7 +127,7 @@ def step_fetch_data(
     historical_start:  str,
     force_refresh:     bool,
 ) -> Dict[str, pd.DataFrame]:
-    """STEP 1 — Tarik data dari BMKG & Open-Meteo. Mengembalikan dict {station: DataFrame raw}."""
+    """STEP 1 — Fetch data from BMKG & Open-Meteo. Returns dict {station: raw DataFrame}."""
     logger.info("=" * 60)
     logger.info("STEP 1: Fetch Data")
     logger.info("=" * 60)
@@ -159,7 +158,7 @@ def step_preprocess(
     end_train:    str,
     stride_hours: int,
 ) -> Dict[str, pd.DataFrame]:
-    """STEP 2 — Preprocessing (origin-state) per stasiun."""
+    """STEP 2 — Preprocessing (origin-state) per station."""
     logger.info("=" * 60)
     logger.info("STEP 2: Preprocessing")
     logger.info("=" * 60)
@@ -196,8 +195,8 @@ def step_build_datasets(
     live_origin:    Optional[str] = None,
 ) -> Dict[str, dict]:
     """
-    STEP 3 — Bangun training / backtest / live direct-horizon frames per
-    stasiun (rolling-origin expansion, lihat preprocessing.build_direct_horizon_frame).
+    STEP 3 — Build training / backtest / live direct-horizon frames per
+    station (rolling-origin expansion, see preprocessing.build_direct_horizon_frame).
     """
     logger.info("=" * 60)
     logger.info("STEP 3: Build Direct-Horizon Datasets (Rolling-Origin)")
@@ -251,7 +250,7 @@ def step_train_predict(
     lgbm_params: Optional[dict],
     output_dir:  str,
 ) -> Dict[str, dict]:
-    """STEP 4 — Training, backtest, live forecast, dan plotting per stasiun."""
+    """STEP 4 — Training, backtest, live forecast, and plotting per station."""
     logger.info("=" * 60)
     logger.info("STEP 4: Train, Backtest, Live Forecast, Plot")
     logger.info("=" * 60)
@@ -261,6 +260,8 @@ def step_train_predict(
 
     for name, ds in datasets.items():
         logger.info(f"\n-- Station: {name} --------------------------------")
+        station_dir = os.path.join(output_dir, "city_detail_result", name.lower())
+        os.makedirs(station_dir, exist_ok=True)
         try:
             mdl = TemperatureForecastModel(
                 station     = name,
@@ -287,14 +288,14 @@ def step_train_predict(
             else:
                 logger.warning("  !  No backtest metrics available (empty backtest window).")
 
-            backtest_csv = os.path.join(output_dir, f"{name.lower()}_backtest_predictions.csv")
+            backtest_csv = os.path.join(station_dir, "backtest_predictions.csv")
             backtest_result.to_csv(backtest_csv, index=False)
 
             live_result = pd.DataFrame()
             live_csv    = ""
             if not ds["live"].empty:
                 live_result = mdl.predict_live(ds["live"])
-                live_csv    = os.path.join(output_dir, f"{name.lower()}_forecast_next14d.csv")
+                live_csv    = os.path.join(station_dir, "forecast_next14d.csv")
                 live_result.to_csv(live_csv, index=False)
                 logger.info(f"  ..  Live 14-day forecast saved -> {live_csv}")
 
@@ -327,7 +328,7 @@ def step_train_predict(
 
 # ─────────────────────────────────────────────────────────────────────────────
 def step_summary(results: Dict[str, dict], output_dir: str):
-    """STEP 5 — Ringkasan hasil semua stasiun."""
+    """STEP 5 — Summary of results across all stations."""
     logger.info("\n" + "=" * 60)
     logger.info("RESULTS SUMMARY")
     logger.info("=" * 60)
@@ -362,7 +363,7 @@ def step_summary(results: Dict[str, dict], output_dir: str):
     for name, res in results.items():
         by_h = res.get("by_horizon")
         if by_h is not None and not by_h.empty:
-            path = os.path.join(output_dir, f"{name.lower()}_metrics_by_horizon.csv")
+            path = os.path.join(output_dir, "city_detail_result", name.lower(), "metrics_by_horizon.csv")
             by_h.to_csv(path, index=False)
             logger.info(f"  ..  {name}: metrics-by-horizon-day saved -> {path}")
 
@@ -370,17 +371,17 @@ def step_summary(results: Dict[str, dict], output_dir: str):
 # ─────────────────────────────────────────────────────────────────────────────
 def run_pipeline(config: Optional[dict] = None) -> Dict[str, dict]:
     """
-    Jalankan pipeline penuh.
+    Run the full pipeline.
 
     Args:
-        config : dict konfigurasi (override DEFAULT_CONFIG). Kunci yang tersedia:
+        config : configuration dict (overrides DEFAULT_CONFIG). Available keys:
                  END_TRAIN, TARGET_DATE, STATIONS, HISTORICAL_START,
                  FORCE_REFRESH, SAVE_MODEL, SHOW_PLOTS, OUTPUT_DIR,
                  ORIGIN_STRIDE_HOURS, FORECAST_HORIZON_HOURS,
                  TRAIN_BACKTEST_BUFFER_DAYS, LIVE_ORIGIN, LGBM_PARAMS.
 
     Returns:
-        dict hasil per stasiun.
+        dict of results per station.
     """
     cfg = {**DEFAULT_CONFIG, **(config or {})}
 
@@ -388,7 +389,7 @@ def run_pipeline(config: Optional[dict] = None) -> Dict[str, dict]:
     logger.info("BMKG Temperature Forecast -- LightGBM Direct-Horizon Pipeline")
     logger.info("=" * 60)
     logger.info(f"STATIONS    : {cfg['STATIONS']}")
-    logger.info(f"HISTORICAL  : mulai {cfg['HISTORICAL_START']}")
+    logger.info(f"HISTORICAL  : starting {cfg['HISTORICAL_START']}")
 
     # ── Step 1: Fetch ─────────────────────────────────────────────────────
     raw_data = step_fetch_data(
@@ -427,10 +428,10 @@ def run_pipeline(config: Optional[dict] = None) -> Dict[str, dict]:
         output_dir  = cfg["OUTPUT_DIR"],
     )
 
-    # ── Step 5: Ringkasan ─────────────────────────────────────────────────
+    # ── Step 5: Summary ─────────────────────────────────────────────────
     step_summary(results, cfg["OUTPUT_DIR"])
 
-    logger.info("\nPipeline selesai.")
+    logger.info("\nPipeline complete.")
     return results
 
 
@@ -441,24 +442,24 @@ def main():
         description="BMKG Temperature Forecast — LightGBM Direct-Horizon Pipeline"
     )
     parser.add_argument("--end-train",   default=None,
-                        help="Batas akhir origin training (YYYY-MM-DD). Default: otomatis dari data terbaru.")
+                        help="Training origin cutoff (YYYY-MM-DD). Default: automatic from the latest data.")
     parser.add_argument("--target-date", default=None,
-                        help="Batas akhir jendela backtest (YYYY-MM-DD). Default: data terbaru yang tersedia.")
+                        help="Backtest window cutoff (YYYY-MM-DD). Default: latest available data.")
     parser.add_argument("--stations",    nargs="+",
                         default=DEFAULT_CONFIG["STATIONS"],
-                        help="Nama stasiun (spasi-separated)")
+                        help="Station names (space-separated)")
     parser.add_argument("--historical-start", default=DEFAULT_CONFIG["HISTORICAL_START"],
-                        help="Mulai data historis (YYYY-MM-DD)")
+                        help="Historical data start date (YYYY-MM-DD)")
     parser.add_argument("--horizon-hours", type=int, default=DEFAULT_CONFIG["FORECAST_HORIZON_HOURS"],
-                        help="Berapa jam ke depan diprediksi per origin (default 336 = 14 hari)")
+                        help="Hours ahead predicted per origin (default 336 = 14 days)")
     parser.add_argument("--origin-stride-hours", type=int, default=DEFAULT_CONFIG["ORIGIN_STRIDE_HOURS"],
-                        help="Jarak antar forecast origin saat membangun dataset (default 24 = harian)")
+                        help="Spacing between forecast origins when building the dataset (default 24 = daily)")
     parser.add_argument("--force-refresh", action="store_true",
-                        help="Paksa re-fetch data")
+                        help="Force re-fetch data")
     parser.add_argument("--no-save-model", action="store_true",
-                        help="Jangan simpan model")
+                        help="Don't save the model")
     parser.add_argument("--show-plots",  action="store_true",
-                        help="Tampilkan grafik interaktif")
+                        help="Show interactive plots")
     args = parser.parse_args()
 
     config = {

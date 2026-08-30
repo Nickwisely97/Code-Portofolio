@@ -1,26 +1,26 @@
 """
 preprocessing.py
-Feature engineering untuk prediksi temperatur Indonesia.
+Feature engineering for Indonesian temperature forecasting.
 
-Pipeline dibangun di sekitar konsep forecast origin T0: model hanya boleh
-memakai informasi yang diketahui pada/sebelum T0, lalu memprediksi setiap jam
-dari T0+1h sampai T0+horizon_hours (default 336 jam / 14 hari) sekaligus
-(direct multi-horizon), bukan autoregresif per jam.
+Pipeline built around the forecast-origin concept T0: the model may only use
+information known at/before T0, then predicts every hour from T0+1h through
+T0+horizon_hours (default 336h / 14 days) at once (direct multi-horizon),
+not autoregressively hour by hour.
 
-Dua kelompok fitur:
-  1. Origin state  — dihitung sekali per origin dari data <= T0:
-       lag suhu (t-1, t-3, t-6, t-12, t-24, t-48, t-72 jam)
-       rolling stats suhu (mean/std/min/max, window 7/14/30/60/90 hari)
-       momentum suhu (selisih t-6h, t-24h)
-       humidity/wind_speed/precipitation saat origin + lag-1/lag-24 jam
-     Nilai-nilai ini di-broadcast ke seluruh baris horizon origin tsb.
-  2. Target calendar — dihitung dari timestamp TARGET (T0+h), bukan T0,
-     karena fakta kalender (jam, hari, bulan, musim) untuk tanggal manapun
-     di masa depan selalu bisa diketahui lebih dulu, jadi aman dipakai.
+Two feature groups:
+  1. Origin state — computed once per origin from data <= T0:
+       temperature lags (t-1, t-3, t-6, t-12, t-24, t-48, t-72h)
+       rolling temperature stats (mean/std/min/max, 7/14/30/60/90-day windows)
+       temperature momentum (t-6h, t-24h differences)
+       humidity/wind_speed/precipitation at origin + lag-1h/lag-24h
+     These values are broadcast across every horizon row of that origin.
+  2. Target calendar — computed from the TARGET timestamp (T0+h), not T0,
+     since calendar facts (hour, day, month, season) for any future date
+     are always knowable in advance, so they're safe to use.
 
-Plus `horizon_h` (jam ke depan dari origin) dan climatology (rata-rata/std
-historis suhu per (bulan, tanggal), dihitung hanya dari data <= suatu
-cutoff) sebagai sinyal tambahan untuk horizon yang jauh.
+Plus `horizon_h` (hours ahead of the origin) and climatology (historical
+mean/std temperature per (month, day), computed only from data <= a given
+cutoff) as extra signal for far-out horizons.
 """
 
 import numpy as np
@@ -32,19 +32,19 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-# ─── Konstanta ──────────────────────────────────────────────────────────────
+# ─── Constants ──────────────────────────────────────────────────────────────
 LAG_HOURS              = [1, 3, 6, 12, 24, 48, 72]
-ROLLING_DAYS           = [7, 14, 30, 60, 90]          # dalam hari → ×24 jam
+ROLLING_DAYS           = [7, 14, 30, 60, 90]          # in days -> ×24 hours
 MOMENTUM_HOURS         = [6, 24]
 WEATHER_AUX_COLS       = ["humidity", "wind_speed", "precipitation"]
 TARGET_COL             = "temperature"
-ORIGIN_STRIDE_HOURS    = 24     # jarak antar forecast origin saat sampling
-FORECAST_HORIZON_HOURS = 336    # 14 hari
+ORIGIN_STRIDE_HOURS    = 24     # spacing between forecast origins when sampling
+FORECAST_HORIZON_HOURS = 336    # 14 days
 
 
 # ─── Helper: Cyclical Encoding ───────────────────────────────────────────────
 def _cyclic(series: pd.Series, max_val: float):
-    """Encode series sebagai (sin, cos) pair untuk representasi siklus."""
+    """Encode a series as a (sin, cos) pair for a cyclical representation."""
     angle = 2 * np.pi * series / max_val
     return np.sin(angle), np.cos(angle)
 
@@ -52,16 +52,16 @@ def _cyclic(series: pd.Series, max_val: float):
 # ─── Target-side calendar features ───────────────────────────────────────────
 def build_temporal_features(ts: pd.Series) -> pd.DataFrame:
     """
-    Fitur kalender siklus untuk sebuah Series timestamp (dipakai pada
-    timestamp TARGET saat membangun direct-horizon frame — bukan pada
-    origin — karena fakta kalender tanggal manapun selalu bisa diketahui
-    lebih dulu).
+    Cyclical calendar features for a timestamp Series (applied to the
+    TARGET timestamp when building the direct-horizon frame -- not the
+    origin -- since calendar facts for any date are always knowable
+    in advance).
 
     Args:
-        ts : Series datetime.
+        ts : datetime Series.
 
     Returns:
-        DataFrame kolom-kolom kalender, index sama dengan `ts`.
+        DataFrame of calendar columns, same index as `ts`.
     """
     ts = pd.to_datetime(ts)
     out = pd.DataFrame(index=ts.index)
@@ -95,22 +95,23 @@ def build_temporal_features(ts: pd.Series) -> pd.DataFrame:
 # ─── Origin-state features ───────────────────────────────────────────────────
 def build_lag_features(df: pd.DataFrame, lags: List[int] = LAG_HOURS) -> pd.DataFrame:
     """
-    Lag suhu relatif terhadap timestamp masing-masing baris. Dipakai sebagai
-    origin state: baris pada T0 merepresentasikan suhu yang sudah diketahui
-    N jam sebelum T0.
+    Temperature lags relative to each row's own timestamp. Used as origin
+    state: a row at T0 represents the temperature already known N hours
+    before T0.
     """
     df = df.copy()
     for lag in lags:
         df[f"lag_{lag}h"] = df[TARGET_COL].shift(lag)
-    logger.debug(f"Lag features ({lags}) selesai.")
+    logger.debug(f"Lag features ({lags}) done.")
     return df
 
 
 def build_rolling_features(df: pd.DataFrame, windows_days: List[int] = ROLLING_DAYS) -> pd.DataFrame:
     """
-    Rolling mean/std/min/max suhu, dihitung dari data SEBELUM timestamp
-    masing-masing baris (shift(1) dulu) — origin state, bukan future info.
-    min_periods = 50% dari ukuran window agar tidak terlalu banyak NaN di awal.
+    Rolling mean/std/min/max temperature, computed from data BEFORE each
+    row's timestamp (shift(1) first) -- origin state, not future info.
+    min_periods = 50% of the window size so the start of the series isn't
+    mostly NaN.
     """
     df = df.copy()
     for days in windows_days:
@@ -121,26 +122,26 @@ def build_rolling_features(df: pd.DataFrame, windows_days: List[int] = ROLLING_D
         df[f"roll_std_{days}d"]  = rolled.std()
         df[f"roll_min_{days}d"]  = rolled.min()
         df[f"roll_max_{days}d"]  = rolled.max()
-    logger.debug(f"Rolling features ({windows_days} days) selesai.")
+    logger.debug(f"Rolling features ({windows_days} days) done.")
     return df
 
 
 def build_momentum_features(df: pd.DataFrame, periods: List[int] = MOMENTUM_HOURS) -> pd.DataFrame:
-    """Momentum = selisih suhu dengan t-n jam yang lalu (arah & kecepatan perubahan)."""
+    """Momentum = temperature difference vs. t-n hours ago (direction & speed of change)."""
     df = df.copy()
     for p in periods:
         df[f"momentum_{p}h"] = df[TARGET_COL].diff(p)
-    logger.debug(f"Momentum features ({periods}) selesai.")
+    logger.debug(f"Momentum features ({periods}) done.")
     return df
 
 
 def build_weather_features(df: pd.DataFrame, aux_cols: List[str] = WEATHER_AUX_COLS) -> pd.DataFrame:
     """
-    Fitur cuaca tambahan sebagai origin state: nilai humidity/wind_speed/
-    precipitation PADA origin (`{col}_at_origin`) plus lag-1 dan lag-24 jam.
-    Kolom mentah (kontemporer terhadap baris) DIBUANG dari hasil akhir —
-    untuk horizon lebih dari beberapa jam, nilai cuaca "saat ini" tidak
-    diketahui, hanya nilai historis sampai origin yang boleh dipakai.
+    Extra weather features as origin state: humidity/wind_speed/precipitation
+    AT the origin (`{col}_at_origin`) plus lag-1h and lag-24h. The raw
+    (contemporaneous-with-the-row) columns are DROPPED from the final
+    result -- for horizons beyond a few hours, "current" weather isn't
+    knowable, only historical values up to the origin are fair game.
     """
     df = df.copy()
     present = [c for c in aux_cols if c in df.columns]
@@ -152,16 +153,16 @@ def build_weather_features(df: pd.DataFrame, aux_cols: List[str] = WEATHER_AUX_C
         df[f"{col}_lag24"]     = filled.shift(24)
 
     df = df.drop(columns=present)
-    logger.debug("Weather auxiliary (origin-state) features selesai.")
+    logger.debug("Weather auxiliary (origin-state) features done.")
     return df
 
 
 def build_origin_state(df_hourly: pd.DataFrame) -> pd.DataFrame:
     """
-    Gabungkan seluruh origin-state builder di atas. Baris hasilnya, pada
-    timestamp T0, merepresentasikan "apa yang sudah diketahui pada T0" —
-    dipakai berulang (broadcast) untuk semua horizon origin T0 tersebut,
-    bukan sebagai fitur milik baris T0 itu sendiri.
+    Combine all the origin-state builders above. The resulting row, at
+    timestamp T0, represents "what was already known at T0" -- reused
+    (broadcast) across every horizon of that origin T0, not treated as a
+    feature belonging to row T0 itself.
     """
     df = build_lag_features(df_hourly)
     df = build_rolling_features(df)
@@ -172,8 +173,9 @@ def build_origin_state(df_hourly: pd.DataFrame) -> pd.DataFrame:
 
 def resample_to_hourly(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Pastikan DataFrame memiliki frekuensi jam yang reguler (1H).
-    Gap akan diisi dengan interpolasi linear untuk suhu, forward-fill untuk yang lain.
+    Ensure the DataFrame has a regular hourly (1H) frequency. Gaps are
+    filled via linear interpolation for temperature, forward-fill for
+    everything else.
     """
     df = df.set_index("timestamp").sort_index()
     df_hourly = df.resample("1h").mean(numeric_only=True)
@@ -197,19 +199,19 @@ def run_preprocessing(
     drop_na: bool = True,
 ) -> pd.DataFrame:
     """
-    Bangun tabel origin-state lengkap dari data mentah.
+    Build the full origin-state table from raw data.
 
     Args:
-        df           : DataFrame raw dengan kolom 'timestamp' dan 'temperature'.
-        station_name : Nama stasiun (opsional, untuk logging & kolom 'station').
-        drop_na      : Buang baris yang state-nya masih NaN (terlalu awal di
-                        histori untuk lag/rolling besar) — baris ini tidak
-                        bisa dipakai sebagai origin.
+        df           : Raw DataFrame with 'timestamp' and 'temperature' columns.
+        station_name : Station name (optional, for logging & the 'station' column).
+        drop_na      : Drop rows whose state is still NaN (too early in
+                        history for the largest lag/rolling window) -- these
+                        rows can't be used as an origin.
 
     Returns:
-        DataFrame origin-state: timestamp, temperature, [station], + fitur
-        lag/rolling/momentum/cuaca. (Fitur kalender TIDAK ada di sini —
-        itu dihitung belakangan untuk timestamp target, lihat
+        Origin-state DataFrame: timestamp, temperature, [station], plus
+        lag/rolling/momentum/weather features. (Calendar features are NOT
+        here -- those are computed later for the target timestamp, see
         build_direct_horizon_frame.)
     """
     label = station_name or "unknown"
@@ -236,9 +238,9 @@ def run_preprocessing(
 
 def get_feature_columns(df: pd.DataFrame) -> List[str]:
     """
-    Kembalikan daftar kolom fitur, exclude kolom bookkeeping/target:
-    timestamp, station, source, origin, temperature, weather_code.
-    Dipakai baik untuk tabel origin-state maupun direct-horizon frame.
+    Return the list of feature columns, excluding bookkeeping/target
+    columns: timestamp, station, source, origin, temperature, weather_code.
+    Used for both the origin-state table and the direct-horizon frame.
     """
     exclude = {"timestamp", "station", "source", "origin", TARGET_COL, "weather_code"}
     return [c for c in df.columns if c not in exclude]
@@ -247,12 +249,12 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
 # ─── Climatology ──────────────────────────────────────────────────────────────
 def build_climatology(df_actual: pd.DataFrame, as_of) -> pd.DataFrame:
     """
-    Rata-rata & std suhu historis per (bulan, tanggal), dihitung HANYA dari
-    data pada/sebelum `as_of` — supaya tetap aman dari leakage saat dipakai
-    sebagai fitur untuk origin manapun >= as_of.
+    Historical mean & std temperature per (month, day), computed ONLY from
+    data on/before `as_of` -- keeps this leakage-safe when used as a
+    feature for any origin >= as_of.
 
     Returns:
-        DataFrame kolom: month, day, climatology_mean, climatology_std.
+        DataFrame with columns: month, day, climatology_mean, climatology_std.
     """
     as_of = pd.to_datetime(as_of)
     hist = df_actual[df_actual["timestamp"] <= as_of].copy()
@@ -263,7 +265,7 @@ def build_climatology(df_actual: pd.DataFrame, as_of) -> pd.DataFrame:
                 .agg(climatology_mean="mean", climatology_std="std")
                 .reset_index())
 
-    # Fallback untuk (bulan, tanggal) dengan sample terlalu sedikit (std NaN).
+    # Fallback for (month, day) buckets with too few samples (std NaN).
     clim["climatology_mean"] = clim["climatology_mean"].fillna(clim["climatology_mean"].mean())
     clim["climatology_std"]  = clim["climatology_std"].fillna(clim["climatology_std"].mean())
 
@@ -279,10 +281,10 @@ def select_origins(
     stride_hours: int = ORIGIN_STRIDE_HOURS,
 ) -> pd.Series:
     """
-    Pilih timestamp yang layak dipakai sebagai forecast origin: state-nya
-    lengkap (tidak NaN), berada dalam rentang [start, end], dan berjarak
-    `stride_hours` satu sama lain (default: harian) supaya jumlah origin
-    tetap terkendali saat dipakai membangun training/backtest set.
+    Pick timestamps fit to use as a forecast origin: state is complete (no
+    NaN), falls within [start, end], and is spaced `stride_hours` apart
+    (default: daily) so the number of origins stays manageable when
+    building the training/backtest set.
     """
     state_cols = get_feature_columns(df_state)
     df = df_state.dropna(subset=state_cols)
@@ -309,23 +311,24 @@ def build_direct_horizon_frame(
     horizon_hours: int = FORECAST_HORIZON_HOURS,
 ) -> pd.DataFrame:
     """
-    Ekspansi setiap origin menjadi `horizon_hours` baris (satu per jam ke
-    depan), masing-masing berisi: origin state (broadcast dari origin),
-    horizon_h, fitur kalender TARGET, climatology, dan suhu aktual pada
-    target (NaN kalau belum benar-benar terjadi — wajar untuk origin
-    terbaru/live).
+    Expand every origin into `horizon_hours` rows (one per hour ahead),
+    each containing: origin state (broadcast from the origin), horizon_h,
+    TARGET calendar features, climatology, and the actual temperature at
+    the target (NaN if it hasn't happened yet -- expected for the
+    latest/live origin).
 
     Args:
-        df_state          : Hasil run_preprocessing() (satu stasiun).
-        df_actual         : DataFrame timestamp+temperature aktual (dipakai
-                             untuk lookup label y); boleh sama dengan df_state.
-        origins            : Timestamp-timestamp origin (mis. dari select_origins()).
-        climatology_table  : Hasil build_climatology().
-        horizon_hours       : Berapa jam ke depan per origin (default 336 = 14 hari).
+        df_state           : Output of run_preprocessing() (one station).
+        df_actual           : DataFrame of actual timestamp+temperature
+                               (used to look up the y label); may be the
+                               same as df_state.
+        origins             : Origin timestamps (e.g. from select_origins()).
+        climatology_table   : Output of build_climatology().
+        horizon_hours       : Hours ahead per origin (default 336 = 14 days).
 
     Returns:
-        DataFrame: origin, horizon_h, timestamp, temperature (y, bisa NaN),
-        + kolom fitur.
+        DataFrame: origin, horizon_h, timestamp, temperature (y, may be NaN),
+        plus feature columns.
     """
     origins = pd.to_datetime(pd.Series(origins).dropna().unique())
     if len(origins) == 0:
@@ -364,7 +367,7 @@ def build_direct_horizon_frame(
 
 # ─── Quick test ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Buat data dummy untuk verifikasi pipeline end-to-end.
+    # Build dummy data for an end-to-end pipeline sanity check.
     dates = pd.date_range("2023-01-01", periods=24 * 400, freq="h")
     temps = (27 + 3 * np.sin(2 * np.pi * dates.dayofyear / 365)
                 + 2 * np.sin(2 * np.pi * dates.hour / 24)

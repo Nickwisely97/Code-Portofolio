@@ -4,7 +4,7 @@ Fetch temperature data for Indonesian cities from two sources:
   - Open-Meteo Historical API (ERA5 reanalysis) -> long-term hourly history
   - BMKG public forecast API                    -> next few days, per kelurahan
 
-Results are cached per station as `data/<station>_raw.parquet` so repeated
+Results are cached per station as `data/<station>/raw.parquet` so repeated
 notebook runs don't re-hit the APIs unless FORCE_REFRESH is set.
 """
 
@@ -19,11 +19,14 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Station registry: BMKG adm4 (kelurahan) code + coordinates for Open-Meteo
+# Station registry: BMKG adm4 (kelurahan) code + coordinates for Open-Meteo.
+# The 5 largest Indonesian cities by population.
 STATIONS = {
     "Jakarta":  {"adm4": "31.71.01.1001", "lat": -6.2088, "lon": 106.8456},
     "Surabaya": {"adm4": "35.78.01.1001", "lat": -7.2575, "lon": 112.7521},
     "Bandung":  {"adm4": "32.73.01.1001", "lat": -6.9175, "lon": 107.6191},
+    "Medan":    {"adm4": "12.71.01.1001", "lat": 3.5952, "lon": 98.6722},  # Medan is north of the equator
+    "Semarang": {"adm4": "33.74.01.1001", "lat": -6.9932, "lon": 110.4203},
 }
 
 BMKG_URL = "https://api.bmkg.go.id/publik/prakiraan-cuaca"
@@ -99,9 +102,9 @@ def fetch_historical(name: str, lat: float, lon: float, start: str = "2019-01-01
 
 def load_station_data(name: str) -> pd.DataFrame:
     """Load a station's cached raw parquet, if present."""
-    path = os.path.join(DATA_DIR, f"{name.lower()}_raw.parquet")
+    path = os.path.join(DATA_DIR, name.lower(), "raw.parquet")
     if os.path.exists(path):
-        logger.info(f"[Cache] Loading {name} dari {path}")
+        logger.info(f"[Cache] Loading {name} from {path}")
         return pd.read_parquet(path)
     return pd.DataFrame(columns=RAW_COLUMNS)
 
@@ -122,14 +125,15 @@ def fetch_all_stations(
     Returns:
         dict {name: DataFrame} with columns RAW_COLUMNS.
     """
-    os.makedirs(DATA_DIR, exist_ok=True)
     result = {}
 
     for name, cfg in stations.items():
-        path = os.path.join(DATA_DIR, f"{name.lower()}_raw.parquet")
+        station_dir = os.path.join(DATA_DIR, name.lower())
+        os.makedirs(station_dir, exist_ok=True)
+        path = os.path.join(station_dir, "raw.parquet")
 
         if not force_refresh and os.path.exists(path):
-            logger.info(f"[Cache] Loading {name} dari {path}")
+            logger.info(f"[Cache] Loading {name} from {path}")
             result[name] = pd.read_parquet(path)
             continue
 
