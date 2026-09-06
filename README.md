@@ -16,6 +16,11 @@ Applied data science / ML projects, organized by technique rather than by indust
 | [Staffing Optimization — Linear Programming](<Project/Optimization & Operations Research/Staffing Optimization - Linear Programming>) | Integer LP (PuLP) | Queueing/Staffing Models |
 | [Self-Order Terminal Staffing — Erlang C Queueing Model](<Project/Optimization & Operations Research/Self-Order Terminal Staffing - Erlang C Queueing Model>) | Discrete-Event Simulation (SimPy), tandem M/M/c queues, P99 SLA | Queueing/Staffing Models, Discrete Event Simulation |
 
+### Exploratory Data Analysis & Reporting
+| Project | Technique | CV skill |
+|---|---|---|
+| [BukaToko Funnel Conversion — Clickstream Analysis](<Project/Exploratory Data Analysis & Reporting/BukaToko Funnel Conversion - Clickstream Analysis>) | EDA, data-quality auditing/cleaning, funnel construction, executive PPTX reporting | Data Cleaning & Funnel/Conversion Analysis |
+
 ### Segmentation & Recommendation
 | Project | Technique | CV skill |
 |---|---|---|
