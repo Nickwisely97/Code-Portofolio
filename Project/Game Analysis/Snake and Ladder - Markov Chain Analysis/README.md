@@ -1,41 +1,40 @@
 # Snake and Ladder — Markov Chain Analysis
 
-**Why a board game:** a public, non-confidential stand-in for stochastic-process modeling — see the repo root README for how each Game Analysis project maps to a real skill.
-**CV skill represented:** Markov chain / absorbing-state modeling — general problem-solving depth beyond the explicit CV skill list.
+**Why a board game:** a public, non-confidential stand-in for stochastic-process modeling.
+**Skills:** Absorbing Markov chains, exact probability analysis (fundamental matrix), sensitivity analysis.
 
 ## Problem
-How many turns does Snake and Ladder actually take to finish, how much does each snake/ladder reshape the odds, and how does the number of dice used per turn change the game?
+How long does a game of Snake and Ladder really take, which snakes and ladders matter most, and does rolling more dice per turn make the game faster?
+
+## Key results
+- **A game takes 80 turns on average with one die**, but the spread is huge (standard deviation 62). The median is 62 turns, and 10% of games last more than 160 turns.
+- **Snakes outweigh ladders.** Ladders save 37 turns in total, snakes add 91. The two snakes just before the finish do the most damage: **97 → 57 adds 27 turns** and **99 → 80 adds 21**.
+- **More dice is not always faster.** Expected length drops from 80 turns (1 die) to **45.5 turns (3 dice, the optimum)**, then rises again to 69 turns with 7 dice. Big rolls keep overshooting square 100, and you must land on it exactly to win.
+
+![Expected turns to finish from each square](result/figures/board_heatmap.png)
 
 ## Method
-The board is modeled as an absorbing Markov chain (one absorbing state: the finish square). The transition matrix is built **directly in Python** (`SnL_markov_chain.py`) from the board layout and the dice-sum distribution — not read from a fixed spreadsheet — so the number of dice is just a parameter (`build_transition_matrix(n_dice=...)`), and the whole analysis re-runs for any dice count without needing a matching data file.
+- The board is modeled as an **absorbing Markov chain** with 100 states; the finish square is the absorbing state.
+- The transition matrix is built in code from the board layout and the dice-sum distribution, so the number of dice is just a parameter.
+- **Exact results, no simulation:** expected turns and their variance come from the fundamental matrix N = (I − Q)⁻¹. The finish-time distribution comes from matrix powers.
+- **Impact of each snake/ladder:** expected game length with vs. without that single element.
+- 5-slide executive PowerPoint report.
 
-Board size, the ladder/snake layout, and the dice count are all set in the notebook's own **Parameters** cell (near the top), not buried as constants inside a module — change the board or the dice count there and re-run.
-
-Rebuilding the matrix in code also surfaced a real bug in the project's old hand-built Excel data: the 2-dice sheet's finish square wasn't actually self-absorbing (it had outgoing "bounce-back" transitions as if the game were still in play), which would have silently corrupted any multi-step probability analysis run on it. The new matrix builder is correct by construction and was validated against the old 1-dice matrix's exact values before that file was retired.
-
-## Deliverables
-- Expected number of turns to finish, from every square (fundamental matrix).
-- Fastest probabilistic route from square 1.
-- Heatmap of expected steps to finish, per board square.
-- Snake/ladder impact ranking — how many turns each element actually saves or costs, accounting for interactions with the rest of the board.
-- Position distribution over time and the finish-time distribution (mean/std computed exactly from the fundamental matrix, not estimated from a truncated simulation).
-- **Dice-count comparison** (1–4 dice) — the direct payoff of building the matrix in code instead of reading it from a spreadsheet.
-
-Reference board layouts used while designing the board are in `docs/`.
-
-## Output layout
+## Project structure
 ```
+code/
+  snake_and_ladder_analysis.ipynb  <- Parameters cell (board, dice) at the top, then STEP-by-STEP analysis
+  SnL_markov_chain.py              <- transition matrix and Markov-chain calculations
+  SnL_visualizations.py            <- all charts
+  SnL_report_builder.py            <- executive PowerPoint report
+docs/                              <- reference photos of the physical board
 result/
-  figures/   -- all chart PNGs (expected steps, heatmap, impact, position/finish distributions, dice comparison)
-  slides/    -- Executive_SnakeLadder_Report_<date>.pptx
+  figures/                         <- heatmap, impact ranking, distributions, dice comparison
+  slides/                          <- Executive_SnakeLadder_Report_<date>.pptx
 ```
-Same `figures/` + `slides/` convention as this portfolio's other executive reports, built by `code/SnL_report_builder.py`.
-
-## Code structure
-- `code/snake_and_ladder_analysis.ipynb` — Parameters cell up top, then the analysis, STEP by STEP.
-- `code/SnL_markov_chain.py` — dynamic transition-matrix builder, expected steps, fastest route, snake/ladder impact, position/finish-time distributions. `SnL_` prefix keeps it identifiable as project-specific, not a generic module name.
-- `code/SnL_visualizations.py` — all chart-building, with a larger shared font baseline (the board heatmap especially was hard to read at the old default sizes).
-- `code/SnL_report_builder.py` — 5-slide executive PPTX (summary, board heatmap, snake/ladder impact, finish-time distribution, dice-count comparison).
 
 ## How to run
-Open `code/snake_and_ladder_analysis.ipynb` and run top to bottom — the board and transition matrix are both built in code, no external data file needed.
+```
+pip install -r requirements.txt
+```
+Open `code/snake_and_ladder_analysis.ipynb` and run it top to bottom. No external data is needed.

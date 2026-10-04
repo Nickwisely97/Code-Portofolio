@@ -1,2 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
+# self-test output of code/model.py (python code/model.py)
+code/result/

@@ -97,7 +97,7 @@ def new_slide(prs, kicker, footer, title_text, page_num, total_pages=None):
     from.
 
     kicker, footer : project-specific strings, e.g.
-                      kicker = "EXECUTIVE REPORT   |   WINE RECOMMENDATION"
+                      kicker = "EXECUTIVE REPORT   |   HEADCOUNT ATTRITION"
                       footer = "K-Nearest Neighbors  |  Cosine Similarity on Chemical Profile"
     total_pages    : if given, the page number reads "03/07"; if None, just "03".
     """
@@ -138,7 +138,7 @@ def add_table(slide, left, top, width, headers, rows, header_h=0.5, row_h=0.45, 
     """
     A grid styled to match the design system instead of pptx's default
     table look. The first column is wider, bold, and left-aligned (an
-    entity label like "City" or "Wine"); the rest are centered numeric/
+    entity label like "City" or "Scenario"); the rest are centered numeric/
     text columns. Pass first_col_frac=None for plain equal-width columns.
 
     headers : list of column labels.

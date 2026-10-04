@@ -1,8 +1,19 @@
-# Regularization (concept demo)
+# Regularization — OLS vs. Ridge vs. Lasso vs. ElasticNet (concept demo)
 
-Standalone comparison of OLS vs. Ridge/Lasso/ElasticNet (all cross-validated) on the sklearn diabetes dataset — R² and coefficient shrinkage side by side.
+**Skills:** Linear regression, regularization (L1 / L2 / ElasticNet), cross-validated hyperparameter tuning.
 
-**Status:** doesn't have a natural standalone "applied" home — flagged to fold into the Temperature Forecast project as a baseline-comparison appendix (regularized linear regression vs. LightGBM), showing the reasoning for reaching for a more complex model rather than jumping straight to it. Kept standalone here for now.
+Compares plain linear regression with three regularized variants on the scikit-learn diabetes dataset (442 patients, 10 features), each tuned with 5-fold cross-validation.
+
+## Key results
+| Model | Test R² |
+|---|---|
+| OLS | 0.453 |
+| Ridge | 0.454 |
+| ElasticNet | 0.461 |
+| **Lasso** | **0.471** |
+
+- With only 10 features, OLS barely overfits, so regularization gives a small gain.
+- **Lasso performs feature selection:** it sets two blood-serum features (`s2`, `s4`) exactly to zero. Ridge keeps every feature and only moderately shrinks the correlated ones.
 
 ## How to run
-Open `code/regularization_analysis.ipynb` and run top to bottom — uses `sklearn.datasets.load_diabetes()`, no external data file.
+Open `code/regularization_analysis.ipynb` and run it top to bottom. It uses `sklearn.datasets.load_diabetes()`, so no data file is needed.

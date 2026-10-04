@@ -3,9 +3,9 @@
 Shared design system for every project's executive PowerPoint report — colors, layout constants, and the building blocks (slide header/footer, stat cards, eyebrows, panels, tables, footnotes). Not a project on its own; every project that builds an executive report imports from here instead of redefining the same navy/gold helpers locally.
 
 ## Why this exists
-Four projects (Headcount Attrition, Temperature Forecast, Wine Recommendation, Snake and Ladder) each had their own `report_builder.py` with a nearly-identical copy of the same ~150 lines of PowerPoint boilerplate (`_rect`, `_text`, `new_slide`, `add_stat_card`, `add_eyebrow`, `add_panel`, a table helper). Pulling that into one place means:
-- A visual tweak (font size, color, spacing) made here propagates to every project's next report build, instead of needing to be hunted down and repeated four times.
-- Every project's own `report_builder.py` shrinks down to just what's actually specific to it: which stats, which charts, how many slides, in what order.
+Five projects build an executive report with it: Headcount Attrition, Temperature Forecast, Self-Order Terminal Staffing, Snake and Ladder, and BukaToko Funnel. Keeping the PowerPoint building blocks in one module means:
+- A visual change (font size, color, spacing) made here applies to every project's next report build.
+- Each project's own `report_builder.py` contains only what's specific to it: which numbers, which charts, how many slides, in what order.
 
 ## What's here
 - `report_template.py` — the shared module. See its docstring for the exact API (`new_presentation`, `new_slide`, `add_stat_card`, `add_eyebrow`, `add_panel`, `add_table`, `add_footnote`, `save_report`, plus the color/layout constants `NAVY`, `GOLD`, `BODY_CLR`, `SLIDE_W`, `MARGIN`, etc.).
