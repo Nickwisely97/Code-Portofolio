@@ -1,0 +1,5 @@
+strategy,mean,median,std,p10,p90,min,max,win_within_50
+Random,95.18,97.0,5.02,88.0,100.0,67,100,0.0
+Hunt & Target,62.53,62.0,13.84,45.0,81.0,26,99,0.21
+Hunt & Target + Parity,54.64,55.0,8.75,43.0,65.0,27,81,0.31
+Probability Density,44.78,44.0,9.04,34.0,57.0,22,72,0.75

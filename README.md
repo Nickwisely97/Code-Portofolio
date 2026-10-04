@@ -34,6 +34,7 @@ Board games used as a **public, non-confidential stand-in** for the kind of stru
 |---|---|---|
 | [Congklak — Minimax & Alpha-Beta Search](<Project/Game Analysis/Congklak - Minimax & Alpha-Beta Search>) | Adversarial search, tournament simulation | Algorithmic decision modeling |
 | [Snake and Ladder — Markov Chain Analysis](<Project/Game Analysis/Snake and Ladder - Markov Chain Analysis>) | Absorbing Markov chains | Stochastic-process modeling |
+| [Battleship — Monte Carlo Strategy Simulation](<Project/Game Analysis/Battleship - Monte Carlo Strategy Simulation>) | Monte Carlo simulation, probability modeling, paired hypothesis tests | Simulation-based decision analysis |
 | [Tournament Bracket — Score Tracker](<Project/Game Analysis/Tournament Bracket - Score Tracker>) | HTML/JS utility | (planned upgrade → Swiss-pairing LP optimizer) |
 
 ## Machine Learning Concept/ — standalone technique demos
