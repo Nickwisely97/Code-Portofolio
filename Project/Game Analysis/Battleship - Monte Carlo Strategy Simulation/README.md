@@ -18,6 +18,13 @@
   | 3 | Hunt & Target + Parity | Hunt only on cells with (row+col) % k = 0, where k is the shortest ship still afloat |
   | 4 | Probability Density | Count every still-possible ship position, then fire at the cell most of them cover (restricted to positions through open hits in target mode) |
 
+- **How the strategies differ, on the same board at the same moment** (shaded = cells the strategy considers for its next shot):
+
+  ![How each strategy chooses its next shot](result/figures/strategy_decisions.png)
+
+  - *Hunting (top row):* Parity skips half the board, since no ship can hide between checkerboard cells. Probability Density aims at the centre, where the most ship positions fit.
+  - *Targeting (bottom row, two hits on E5–E6):* both Hunt & Target variants treat all 6 neighbouring cells as equally good. Probability Density sees that the ship most likely continues **along the same line** (E4 or E7) and fires there first.
+
 - **Monte Carlo** (`BS_simulation.py`): 3,000 games per strategy. Game *g* uses the **same board for every strategy**, so comparisons are paired (Wilcoxon signed-rank) and board luck cancels out.
 - **Defense:** four placement styles (random / edge / cluster / spread) × three attackers, 1,500 games each. The **adaptive** attacker learns the defender's habit as a prior: how often that style puts a ship on each cell compared with random placement.
 
@@ -53,6 +60,7 @@
 - `example_board.png`: one random fleet placement
 - `opening_probability.png`: analytic vs simulated ship-likelihood per cell
 - `shots_distribution.png`, `shots_cdf.png`: shots-to-win distribution and P(won within N shots) per strategy
+- `strategy_decisions.png`: how each strategy picks its next shot, side by side
 - `game_snapshots.png`, `probability_density_game.gif`: the probability attacker's view, shot by shot, through one game
 - `placement_styles.png`: where each placement style puts ships
 - `defense_matrix.png`: attacker × placement-style matrix

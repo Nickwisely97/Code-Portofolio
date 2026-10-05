@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.colors import ListedColormap
 
 from BS_game import HIT, MISS, SUNK
 from BS_strategies import probability_map
@@ -63,6 +64,58 @@ def plot_heatmaps(grids, size, save_path, fmt=".0f", cmap="rocket_r"):
                     cbar=False, annot_kws={"fontsize": 10}, ax=ax)
         _board_axes(ax, size)
         ax.set_title(title)
+    fig.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    return save_path
+
+
+STRATEGY_RULES = {
+    "Random": "fire anywhere not yet fired at",
+    "Hunt & Target": "random, but after a hit\nfire next to it",
+    "Hunt & Target + Parity": "hunt on a checkerboard only,\nafter a hit fire next to it",
+    "Probability Density": "fire where the most possible\nship positions overlap",
+}
+
+
+def plot_strategy_decisions(scenarios, remaining_lengths, size, save_path):
+    """
+    Side-by-side illustration of how each strategy picks its next shot.
+    scenarios : {row label: flat shots grid}. Shaded cells are the ones the
+    strategy considers; for Probability Density darker = more likely, and the
+    yellow box marks the cell it actually fires at.
+    """
+    from BS_strategies import STRATEGIES, decision_weights
+
+    names = list(STRATEGIES)
+    fig, axes = plt.subplots(len(scenarios), len(names), figsize=(5.2 * len(names), 6.2 * len(scenarios)))
+    r, c = np.divmod(np.arange(size * size), size)
+    for row, (label, shots) in enumerate(scenarios.items()):
+        for col, name in enumerate(names):
+            ax = axes[row, col]
+            weights = decision_weights(name, shots, remaining_lengths, size)
+            # Rule-based strategies: candidate or not (two flat colors). Probability Density: graded map.
+            cmap = "mako_r" if name == "Probability Density" else ListedColormap(["#EAF2F8", "#3A7DC9"])
+            sns.heatmap((weights / weights.max()).reshape(size, size), cmap=cmap, vmin=0, vmax=1.15 if name == "Probability Density" else 1,
+                        square=True, cbar=False, linewidths=0.5, linecolor="white", ax=ax)
+            for state, marker, color in [(MISS, "x", "#7F8C8D"), (HIT, "o", "#E74C3C")]:
+                idx = shots == state
+                ax.scatter(c[idx] + 0.5, r[idx] + 0.5, marker=marker, s=160, color=color, linewidths=3, zorder=3)
+            n_candidates = int((weights > 0).sum())
+            if name == "Probability Density":
+                for cell in np.flatnonzero(weights == weights.max()):
+                    tr, tc = divmod(cell, size)
+                    ax.add_patch(plt.Rectangle((tc, tr), 1, 1, fill=False, edgecolor="#F1C40F", linewidth=4, zorder=4))
+                caption = "fires at the darkest cell (yellow)"
+            else:
+                caption = f"picks 1 of {n_candidates} shaded cells at random"
+            _board_axes(ax, size)
+            ax.set_xlabel(caption, fontsize=13)
+            if row == 0:
+                ax.set_title(f"{name}\n{STRATEGY_RULES[name]}", fontsize=14, fontweight="bold")
+            if col == 0:
+                ax.set_ylabel(label, fontsize=15, fontweight="bold")
+    fig.suptitle("How Each Strategy Chooses Its Next Shot (same board, same moment)   x = miss, o = hit",
+                 fontsize=18, y=1.0)
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     return save_path

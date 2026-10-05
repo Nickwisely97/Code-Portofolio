@@ -1,4 +1,6 @@
 pandas
-pulp
+numpy
 matplotlib
-openpyxl
+seaborn
+pulp
+python-pptx

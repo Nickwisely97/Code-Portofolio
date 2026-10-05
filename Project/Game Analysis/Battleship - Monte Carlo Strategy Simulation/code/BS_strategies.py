@@ -63,12 +63,16 @@ def hunt_target_parity(shots, remaining_lengths, size, rng):
     targets = _target_cells(shots, size)
     if targets is not None:
         return _pick(targets, rng)
+    return _pick(_parity_cells(shots, remaining_lengths, size), rng)
+
+
+def _parity_cells(shots, remaining_lengths, size):
     k = min(remaining_lengths)
     row, col = np.divmod(np.arange(size * size), size)
     candidates = np.flatnonzero((shots == UNKNOWN) & ((row + col) % k == 0))
     if candidates.size == 0:
         candidates = np.flatnonzero(shots == UNKNOWN)
-    return _pick(candidates, rng)
+    return candidates
 
 
 def probability_map(shots, remaining_lengths, size, prior=None):
@@ -113,6 +117,27 @@ def make_probability_density(prior=None):
 
 
 probability_density = make_probability_density()
+
+
+def decision_weights(strategy_name, shots, remaining_lengths, size):
+    """
+    How strongly each cell is considered for the next shot, per strategy --
+    for illustration (see BS_visualizations.plot_strategy_decisions). The
+    three rule-based strategies pick uniformly among their candidate cells
+    (weight 1); Probability Density returns its full probability map.
+    """
+    weights = np.zeros(size * size)
+    if strategy_name == "Probability Density":
+        return probability_map(shots, remaining_lengths, size)
+    if strategy_name == "Random":
+        candidates = np.flatnonzero(shots == UNKNOWN)
+    else:
+        candidates = _target_cells(shots, size)
+        if candidates is None:
+            candidates = (_parity_cells(shots, remaining_lengths, size) if strategy_name == "Hunt & Target + Parity"
+                          else np.flatnonzero(shots == UNKNOWN))
+    weights[candidates] = 1
+    return weights
 
 STRATEGIES = {
     "Random": random_shot,

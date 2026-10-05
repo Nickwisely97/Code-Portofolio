@@ -24,7 +24,7 @@ Applied data science projects, organized by technique. Each folder matches a ski
 | Project | Technique | Key result |
 |---|---|---|
 | [Self-Order Terminal Staffing — Queueing Simulation](<Project/Optimization & Operations Research/Self-Order Terminal Staffing - Erlang C Queueing Model>) | Discrete-event simulation (SimPy), tandem queues, P99 SLA | Kitchen caps capacity at ~111/hr; kiosk-only is most labor-efficient |
-| [Staffing Optimization — Linear Programming](<Project/Optimization & Operations Research/Staffing Optimization - Linear Programming>) | Integer linear programming (PuLP) | Minimum 44 staff to cover 24-hour demand |
+| [Monthly Workforce Roster — Mixed-Integer Programming](<Project/Optimization & Operations Research/Staffing Optimization - Linear Programming>) | Mixed-integer programming (PuLP / CBC), 3-stage staffing → rostering, penalty-based soft constraints | 38 agents cover 99.97% of hourly demand under Indonesian labor law; the weekend-off rule alone adds 11 |
 
 ### Exploratory Data Analysis & Reporting
 | Project | Technique | Key result |
